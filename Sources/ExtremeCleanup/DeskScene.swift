@@ -150,10 +150,10 @@ final class DeskScene: SKScene {
         path.addLines(between: local)
         path.closeSubpath()
 
-        let shard = SKSpriteNode(texture: shardTexture(triangle))
-        shard.position = centroid
         // Sprites anchor at their bounding box, the physics body at the centroid.
         let box = path.boundingBox
+        let shard = SKSpriteNode(texture: shardTexture(triangle), size: box.size)
+        shard.position = centroid
         shard.anchorPoint = CGPoint(x: -box.minX / box.width, y: -box.minY / box.height)
 
         let body = SKPhysicsBody(polygonFrom: path)

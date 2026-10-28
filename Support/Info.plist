@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>DeskToy</string>
+    <string>ExtremeCleanup</string>
     <key>CFBundleIdentifier</key>
-    <string>studio.boroda.desktoy</string>
+    <string>studio.boroda.extremecleanup</string>
     <key>CFBundleName</key>
-    <string>DeskToy</string>
+    <string>Extreme Cleanup</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -19,6 +19,6 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>DeskToy asks Finder where your desktop icons are, so it can knock them around. It never moves or changes your files.</string>
+    <string>Extreme Cleanup asks Finder where your desktop icons are, so it can knock them around. It never moves or changes your files.</string>
 </dict>
 </plist>
