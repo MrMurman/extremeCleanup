@@ -18,6 +18,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return URL(fileURLWithPath: args[i + 1])
     }()
 
+    /// `--demo-hammer <dir>`: scripted hammer run on the main display, with captures and a frame-rate report.
+    private let demoDir: URL? = {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--demo-hammer"), i + 1 < args.count else { return nil }
+        return URL(fileURLWithPath: args[i + 1])
+    }()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { @MainActor in
             let shots = await Snapshot.captureAll()
@@ -27,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let dir = selfCheckDir {
                 try? await Task.sleep(for: .seconds(1))
                 await SelfCheck.run(shots: shots, icons: icons, into: dir)
+                NSApp.terminate(nil)
+            }
+            if let dir = demoDir, let scene = scenes.first, let shot = shots.first {
+                await Demo.hammer(scene: scene, screen: shot.screen, into: dir)
                 NSApp.terminate(nil)
             }
         }
@@ -45,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let view = SKView(frame: CGRect(origin: .zero, size: shot.screen.frame.size))
             view.ignoresSiblingOrder = true
+            view.preferredFramesPerSecond = shot.screen.maximumFramesPerSecond
             let scene = DeskScene(shot: shot, icons: icons)
             view.presentScene(scene)
             window.contentView = view
