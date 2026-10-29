@@ -4,8 +4,13 @@ final class DeskScene: SKScene {
     enum Tool: String { case hammer = "Hammer", minigun = "Minigun" }
 
     var tool: Tool = .hammer {
-        didSet { stopFiring(); announce(tool.rawValue) }
+        didSet { stopFiring(); announce(tool.rawValue); toolbelt?.select(tool) }
     }
+    /// Asks the app to switch every display to a tool picked on the belt.
+    var onPickTool: ((Tool) -> Void)?
+    /// Asks the app to sweep every display, when the broom on the belt is clicked.
+    var onSweepRequest: (() -> Void)?
+    private var toolbelt: Toolbelt?
 
     private let world = SKNode()
     /// The snapshot and its cracks, masked so that holes show what lies behind.
@@ -51,7 +56,7 @@ final class DeskScene: SKScene {
     private(set) var roundsFired = 0
     private(set) var shatters = 0
 
-    init(shot: ScreenShot, icons: [DesktopIcon]) {
+    init(shot: ScreenShot, icons: [DesktopIcon], showsControls: Bool) {
         backdropTexture = DeskScene.texture(from: shot.image)
         snapshot = shot.image
         wallpaper = shot.wallpaper
@@ -110,6 +115,16 @@ final class DeskScene: SKScene {
         }
         debugLayer.isHidden = true
         addChild(debugLayer)
+
+        if showsControls {
+            let belt = Toolbelt(screenSize: size, broomTexture: DeskScene.broomTexture, broomSize: DeskScene.broomSize,
+                                handleTop: DeskScene.broomHandleTop)
+            belt.onPick = { [weak self] tool in self?.onPickTool?(tool) }
+            belt.onSweep = { [weak self] in self?.onSweepRequest?() }
+            belt.select(tool)
+            addChild(belt)
+            toolbelt = belt
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -127,6 +142,10 @@ final class DeskScene: SKScene {
     }
 
     var creaturesReleased: Int { tendrils.released }
+    var damagedSites: Int { damage.sites.count }
+    var beltPockets: [CGPoint] { toolbelt?.pocketCentres ?? [] }
+    var beltCharm: CGPoint? { toolbelt?.charmCentre }
+    var beltVisible: Bool { toolbelt.map { !$0.isHidden } ?? false }
     /// Centres of the icons still on the glass.
     var iconCentres: [CGPoint] { icons.map { CGPoint(x: $0.midX, y: $0.midY) } }
 
@@ -136,9 +155,14 @@ final class DeskScene: SKScene {
     }
 
     override func mouseDown(with event: NSEvent) {
+        press(at: event.location(in: self))
+    }
+
+    /// A mouse press: the belt takes it if it lands there, otherwise the current tool does.
+    func press(at point: CGPoint) {
         guard broom == nil, !isClean else { return }
-        let point = event.location(in: self)
         lookToward(point)
+        if toolbelt?.handleClick(at: point) == true { return }
         switch tool {
         case .hammer: hammer(at: point)
         case .minigun: startFiring(at: point)
@@ -403,27 +427,51 @@ final class DeskScene: SKScene {
         stopFiring()
         SoundFX.shared.play(.sweep)
 
-        // Floor runs on past the right edge, with no wall there, so the debris can be pushed out.
+        // Floor runs on past the left edge, with no wall there, so the debris can be pushed out.
         let floor = CGMutablePath()
-        floor.move(to: CGPoint(x: 0, y: size.height * 3))
-        floor.addLine(to: .zero)
-        floor.addLine(to: CGPoint(x: size.width + 2000, y: 0))
+        floor.move(to: CGPoint(x: size.width, y: size.height * 3))
+        floor.addLine(to: CGPoint(x: size.width, y: 0))
+        floor.addLine(to: CGPoint(x: -2000, y: 0))
         physicsBody = SKPhysicsBody(edgeChainFrom: floor)
         physicsBody?.categoryBitMask = Category.edge
 
         let broom = SKSpriteNode(texture: DeskScene.broomTexture, size: DeskScene.broomSize)
         broom.anchorPoint = CGPoint(x: 0.5, y: 0)
-        broom.position = CGPoint(x: -DeskScene.broomSize.width, y: 0)
         broom.zPosition = 5
-        let head = SKPhysicsBody(rectangleOf: CGSize(width: 70, height: 150), center: CGPoint(x: 10, y: 75))
-        head.categoryBitMask = Category.broom
-        head.collisionBitMask = Category.debris
-        head.affectedByGravity = false
-        head.allowsRotation = false
-        head.mass = 10_000
-        broom.physicsBody = head
         world.addChild(broom)
         self.broom = broom
+        let start = CGPoint(x: size.width + DeskScene.broomSize.width / 2, y: 0)
+        let push = SKAction.run {
+            let head = SKPhysicsBody(rectangleOf: CGSize(width: 70, height: 150), center: CGPoint(x: -10, y: 75))
+            head.categoryBitMask = Category.broom
+            head.collisionBitMask = Category.debris
+            head.affectedByGravity = false
+            head.allowsRotation = false
+            head.mass = 10_000
+            broom.physicsBody = head
+        }
+        // The broom charm drops off the belt, grows to full size as it lands, and starts sweeping from there.
+        var lead: TimeInterval = 0
+        if let hung = toolbelt?.releaseBroom() {
+            lead = 0.4
+            let hangPoint = DeskScene.broomHandleTop
+            broom.anchorPoint = CGPoint(x: hangPoint.x / DeskScene.broomSize.width, y: hangPoint.y / DeskScene.broomSize.height)
+            broom.position = hung
+            broom.setScale(Toolbelt.charmScale)
+            broom.zRotation = Toolbelt.charmTilt
+            let land = CGPoint(x: min(hung.x, size.width - 40), y: 0)
+            let fall = SKAction.group([.scale(to: 1, duration: lead), .rotate(toAngle: 0, duration: lead),
+                                       .move(to: CGPoint(x: land.x, y: hangPoint.y), duration: lead)])
+            fall.timingMode = .easeIn
+            broom.run(.sequence([fall, .run {
+                broom.anchorPoint = CGPoint(x: 0.5, y: 0)
+                broom.position = CGPoint(x: land.x - (hangPoint.x - DeskScene.broomSize.width / 2), y: 0)
+            }, push]))
+            toolbelt?.leave()
+        } else {
+            broom.position = start
+            broom.run(push)
+        }
 
         let clean = SKSpriteNode(texture: DeskScene.texture(from: wallpaper), size: size)
         clean.anchorPoint = .zero
@@ -431,7 +479,7 @@ final class DeskScene: SKScene {
         clean.alpha = 0
         addChild(clean)
         run(.sequence([
-            .wait(forDuration: 1.5),
+            .wait(forDuration: 1.5 + lead),
             .run { [weak self] in
                 self?.shardLayer.run(.fadeOut(withDuration: 0.4))
                 self?.iconLayer.run(.fadeOut(withDuration: 0.4))
@@ -482,8 +530,10 @@ final class DeskScene: SKScene {
     }
 
     private static let broomSize = CGSize(width: 150, height: 300)
+    /// Top end of the broom's handle, in the broom texture's points.
+    private static let broomHandleTop = CGPoint(x: broomSize.width - 14, y: broomSize.height - 8)
 
-    /// A push broom leaning back against the direction it sweeps.
+    /// A push broom leaning back against the direction it sweeps (right to left).
     private static let broomTexture: SKTexture = {
         let scale: CGFloat = 2
         let w = broomSize.width, h = broomSize.height
@@ -491,6 +541,8 @@ final class DeskScene: SKScene {
                                 bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.scaleBy(x: scale, y: scale)
+        context.translateBy(x: w, y: 0)
+        context.scaleBy(x: -1, y: 1)
         context.setLineCap(.round)
         context.setStrokeColor(CGColor(red: 0.45, green: 0.28, blue: 0.14, alpha: 1))
         context.setLineWidth(9)
@@ -673,7 +725,7 @@ final class DeskScene: SKScene {
 
     override func update(_ currentTime: TimeInterval) {
         if let broom, let body = broom.physicsBody {
-            body.velocity = CGVector(dx: (size.width + 2 * DeskScene.broomSize.width) / 1.4, dy: 0)
+            body.velocity = CGVector(dx: -(size.width + 2 * DeskScene.broomSize.width) / 1.4, dy: 0)
             broom.position.y = 0
         }
         let dt = lastUpdate == 0 ? 0 : min(currentTime - lastUpdate, 0.1)

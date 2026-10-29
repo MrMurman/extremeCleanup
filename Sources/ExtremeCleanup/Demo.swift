@@ -180,6 +180,68 @@ enum Demo {
         try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
     }
 
+    static func belt(scene: DeskScene, screen: NSScreen, into dir: URL) async {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var report = ""
+        func check(_ name: String, _ ok: Bool) { report += (ok ? "PASS " : "FAIL ") + name + "\n" }
+        let pockets = scene.beltPockets
+        check("belt has 8 pockets", pockets.count == 8)
+        guard pockets.count == 8 else { return }
+        try? await Task.sleep(for: .seconds(1))
+        await capture(screen, to: dir.appendingPathComponent("1-belt-hammer.png"))
+
+        scene.press(at: pockets[1])
+        check("click pocket 2 selects the minigun", scene.tool == .minigun)
+        try? await Task.sleep(for: .seconds(1))
+        await capture(screen, to: dir.appendingPathComponent("2-belt-minigun.png"))
+        scene.press(at: pockets[0])
+        check("click pocket 1 selects the hammer", scene.tool == .hammer)
+
+        let sites = scene.damagedSites, rounds = scene.roundsFired
+        for i in 0..<8 { scene.press(at: pockets[i]) }
+        scene.press(at: pockets[1])
+        for i in 0..<8 { scene.press(at: pockets[i]) }
+        check("clicks on the belt never damage the glass", scene.damagedSites == sites && scene.roundsFired == rounds)
+        scene.press(at: pockets[0])
+        for i in 2..<8 { scene.press(at: pockets[i]) }
+        check("empty pockets keep the current tool", scene.tool == .hammer)
+
+        // Load the screen with damage, then measure the frame rate with the belt up.
+        scene.press(at: pockets[1])
+        scene.resetFrameStats()
+        let w = scene.size.width, h = scene.size.height
+        scene.startFiring(at: CGPoint(x: w / 2, y: h / 2))
+        let start = Date()
+        while Date().timeIntervalSince(start) < 15 {
+            let t = CGFloat(Date().timeIntervalSince(start))
+            scene.aim(at: CGPoint(x: w * 0.45 + w * 0.35 * sin(t * 0.7), y: h / 2 + h * 0.35 * sin(t * 1.1)))
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        scene.stopFiring()
+        report += String(format: "worst 1-s fps over 15 s of fire with the belt up: %.1f\n", scene.worstFPS)
+        try? await Task.sleep(for: .seconds(1.5))
+        await capture(screen, to: dir.appendingPathComponent("3-wrecked.png"))
+
+        if let charm = scene.beltCharm {
+            scene.press(at: charm)
+            try? await Task.sleep(for: .seconds(0.3))
+            await capture(screen, to: dir.appendingPathComponent("4-charm-falling.png"))
+            try? await Task.sleep(for: .seconds(0.6))
+            await capture(screen, to: dir.appendingPathComponent("5-sweeping.png"))
+            let begin = Date()
+            while !scene.isClean && Date().timeIntervalSince(begin) < 10 {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            check("clicking the broom charm sweeps to the clean desktop", scene.isClean)
+            check("the belt is gone in the clean finale", !scene.beltVisible)
+            try? await Task.sleep(for: .seconds(2))
+            await capture(screen, to: dir.appendingPathComponent("6-clean.png"))
+        } else {
+            check("broom charm present", false)
+        }
+        try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
+    }
+
     private static func snapshot(_ screen: NSScreen) async -> CGImage? {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
               let display = content.displays.first(where: { $0.displayID == Snapshot.displayID(of: screen) })

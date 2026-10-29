@@ -13,11 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `--self-check <dir>`: re-capture the screen with the overlay up, write a pixel diff report, quit.
     private let selfCheckDir = AppDelegate.directory(after: "--self-check")
-    /// `--demo-hammer|minigun|void|sweep <dir>`: scripted run on the main display, with captures and a report.
+    /// `--demo-hammer|minigun|void|sweep|belt <dir>`: scripted run on the main display, with captures and a report.
     private let hammerDemoDir = AppDelegate.directory(after: "--demo-hammer")
     private let minigunDemoDir = AppDelegate.directory(after: "--demo-minigun")
     private let voidDemoDir = AppDelegate.directory(after: "--demo-void")
     private let sweepDemoDir = AppDelegate.directory(after: "--demo-sweep")
+    private let beltDemoDir = AppDelegate.directory(after: "--demo-belt")
 
     private static func directory(after flag: String) -> URL? {
         let args = CommandLine.arguments
@@ -47,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     await Demo.minigun(scene: scene, screen: shot.screen, into: dir)
                     NSApp.terminate(nil)
                 }
+                if let dir = beltDemoDir {
+                    await Demo.belt(scene: scene, screen: shot.screen, into: dir)
+                    NSApp.terminate(nil)
+                }
                 if let dir = sweepDemoDir {
                     await Demo.sweep(scene: scene, screen: shot.screen, iconsBefore: icons, into: dir)
                     NSApp.terminate(nil)
@@ -74,7 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let view = SKView(frame: CGRect(origin: .zero, size: shot.screen.frame.size))
             view.ignoresSiblingOrder = true
             view.preferredFramesPerSecond = shot.screen.maximumFramesPerSecond
-            let scene = DeskScene(shot: shot, icons: icons)
+            let scene = DeskScene(shot: shot, icons: icons, showsControls: shot.screen == NSScreen.screens.first)
+            scene.onPickTool = { [weak self] tool in self?.select(tool) }
+            scene.onSweepRequest = { [weak self] in self?.scenes.forEach { $0.sweep() } }
             view.presentScene(scene)
             window.contentView = view
             (view.layer as? CAMetalLayer)?.colorspace = shot.image.colorSpace
