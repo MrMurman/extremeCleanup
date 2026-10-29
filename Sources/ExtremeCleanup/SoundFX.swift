@@ -47,6 +47,7 @@ final class SoundFX {
             }
             return v
         }
+        engine.mainMixerNode.outputVolume = 0.6
         try? engine.start()
     }
 
