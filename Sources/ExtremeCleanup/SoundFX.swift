@@ -2,7 +2,7 @@ import AVFoundation
 
 /// Procedurally synthesised effects, so the app ships no audio files.
 final class SoundFX {
-    enum Effect { case thud, crack, shatter }
+    enum Effect { case thud, crack, shatter, shot }
 
     static let shared = SoundFX()
 
@@ -13,7 +13,8 @@ final class SoundFX {
     private let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
 
     private init() {
-        for _ in 0..<8 {
+        // Enough voices that a stream of gunshots doesn't cut a shatter short.
+        for _ in 0..<16 {
             let player = AVAudioPlayerNode()
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: format)
@@ -21,6 +22,9 @@ final class SoundFX {
         }
         buffers[.thud] = synth(seconds: 0.3) { t, noise in
             sin(2 * .pi * 70 * t) * exp(-t * 16) * 0.9 + noise * exp(-t * 70) * 0.5
+        }
+        buffers[.shot] = synth(seconds: 0.12) { t, noise in
+            noise * exp(-t * 45) * 0.7 + sin(2 * .pi * 95 * t) * exp(-t * 35) * 0.6
         }
         var last: Float = 0
         buffers[.crack] = synth(seconds: 0.15) { t, noise in

@@ -1,6 +1,6 @@
 # Extreme Cleanup
 
-A desktop toy for macOS: take a hammer to your screen, watch the glass crack, shatter and pile up at the
+A desktop toy for macOS: take a hammer or a minigun to your screen, watch the glass crack, shatter and pile up at the
 bottom. Built from scratch with AI as an homage to the 2000s classic *Desktop Destroyer*.
 
 **It never touches your files.** The app takes a snapshot of your screen and wrecks the picture. Press
@@ -12,7 +12,9 @@ Esc and your real desktop is exactly as you left it.
 
 | Key / mouse | Action |
 |---|---|
+| 1 / 2 | Pick a tool: hammer / minigun |
 | Click | Hammer: one hit cracks, two widen the crack, three shatter the glass |
+| Hold | Minigun: every round leaves a bullet hole; seven in one spot shatter it |
 | Esc / ⌘Q | Quit — back to your untouched desktop |
 | D | Debug overlay (frame rate, detected icons) |
 

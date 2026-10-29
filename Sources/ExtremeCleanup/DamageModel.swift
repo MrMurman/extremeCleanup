@@ -13,7 +13,8 @@ struct DamageModel {
     enum Stage: Int, Comparable {
         case intact, crack, bigCrack, shattered
         init(damage: Double) {
-            switch damage {
+            // Rounds deal fractional damage; their sum must still reach a whole stage exactly.
+            switch damage + 1e-9 {
             case ..<1: self = .intact
             case ..<2: self = .crack
             case ..<3: self = .bigCrack
@@ -26,12 +27,14 @@ struct DamageModel {
     struct HitResult {
         let site: Site
         let previousStage: Stage
+        let previousDamage: Double
         /// Sites absorbed into `site` by this hit.
         let merged: [Int]
     }
 
     var mergeRadius: CGFloat = 60
-    /// How far a site's centre moves toward each new hit, as a fraction of the distance.
+    /// How far a site's centre moves toward a full-strength hit, as a fraction of the distance. Weaker hits
+    /// pull less, so a sweep of rounds breaks into separate sites instead of dragging one along.
     var drift: CGFloat = 0.25
     private(set) var sites: [Site] = []
     private var nextID = 0
@@ -42,7 +45,7 @@ struct DamageModel {
             let site = Site(id: nextID, centre: point, damage: amount)
             nextID += 1
             sites.append(site)
-            return HitResult(site: site, previousStage: .intact, merged: [])
+            return HitResult(site: site, previousStage: .intact, previousDamage: 0, merged: [])
         }
 
         let group = near.map { sites[$0] }
@@ -53,13 +56,13 @@ struct DamageModel {
 
         var site = keeper
         site.centre = CGPoint(x: weighted.x / total, y: weighted.y / total)
-        site.centre = site.centre.moved(toward: point, by: drift)
+        site.centre = site.centre.moved(toward: point, by: drift * CGFloat(min(amount, 1)))
         site.damage = total + amount
 
         let mergedIDs = group.map(\.id).filter { $0 != keeper.id }
         sites.removeAll { s in group.contains { $0.id == s.id } }
         sites.append(site)
-        return HitResult(site: site, previousStage: previous, merged: mergedIDs)
+        return HitResult(site: site, previousStage: previous, previousDamage: total, merged: mergedIDs)
     }
 }
 

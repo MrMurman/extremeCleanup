@@ -1,10 +1,17 @@
 import SpriteKit
 
 final class DeskScene: SKScene {
+    enum Tool: String { case hammer = "Hammer", minigun = "Minigun" }
+
+    var tool: Tool = .hammer {
+        didSet { stopFiring(); announce(tool.rawValue) }
+    }
+
     private let world = SKNode()
     /// The snapshot and its cracks, masked so that holes show what lies behind.
     private let surface = SKCropNode()
     private let crackLayer = SKNode()
+    private let markLayer = SKNode()
     private let shardLayer = SKNode()
     private let debugLayer = SKNode()
     private let backdropTexture: SKTexture
@@ -17,6 +24,17 @@ final class DeskScene: SKScene {
     private let maxShards = 250
     /// The hole mask is redrawn on every shatter, so it is kept at half resolution.
     private let maskScale: CGFloat = 0.5
+    private let maxMarks = 600
+
+    /// Where the minigun is aimed while the trigger is held.
+    private var trigger: CGPoint?
+    private var nextRoundAt: TimeInterval = 0
+    private let roundInterval: TimeInterval = 1.0 / 15
+    /// Seven rounds on one spot shatter it, the same as three hammer hits.
+    private let roundDamage = 3.0 / 7
+    private let shells = SKEmitterNode()
+    private(set) var roundsFired = 0
+    private(set) var shatters = 0
 
     init(shot: ScreenShot, icons: [DesktopIcon]) {
         backdropTexture = DeskScene.texture(from: shot.image)
@@ -34,14 +52,17 @@ final class DeskScene: SKScene {
 
         let backdrop = SKSpriteNode(texture: backdropTexture, size: size)
         backdrop.anchorPoint = .zero
+        markLayer.zPosition = 0.5
         crackLayer.zPosition = 1
         shardLayer.zPosition = 2
         debugLayer.zPosition = 10
         surface.addChild(backdrop)
+        surface.addChild(markLayer)
         surface.addChild(crackLayer)
         world.addChild(surface)
         world.addChild(shardLayer)
         addChild(world)
+        setUpShells()
 
         // Floor and walls, open at the top, so debris piles up at the bottom of the screen.
         let bounds = CGMutablePath()
@@ -73,13 +94,55 @@ final class DeskScene: SKScene {
     // MARK: - Input
 
     override func mouseDown(with event: NSEvent) {
-        hammer(at: event.location(in: self))
+        let point = event.location(in: self)
+        switch tool {
+        case .hammer: hammer(at: point)
+        case .minigun: startFiring(at: point)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if trigger != nil { aim(at: event.location(in: self)) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        stopFiring()
     }
 
     func hammer(at point: CGPoint) {
         SoundFX.shared.play(.thud)
         dust(at: point)
         apply(damage.hit(at: point, amount: 1), impact: point)
+    }
+
+    func startFiring(at point: CGPoint) {
+        trigger = point
+        nextRoundAt = 0
+        shells.position = point
+        shells.particleBirthRate = CGFloat(1 / roundInterval)
+    }
+
+    func aim(at point: CGPoint) {
+        trigger = point
+        shells.position = point
+    }
+
+    func stopFiring() {
+        trigger = nil
+        shells.particleBirthRate = 0
+    }
+
+    private func fireRound(at aim: CGPoint) {
+        roundsFired += 1
+        let angle = CGFloat.random(in: 0..<2 * .pi), spread = 7 * sqrt(CGFloat.random(in: 0...1))
+        let point = CGPoint(x: aim.x + cos(angle) * spread, y: aim.y + sin(angle) * spread)
+        SoundFX.shared.play(.shot, volume: 0.55)
+        flash(at: point)
+        if !holes.contains(where: { $0.contains(point) }) { mark(at: point) }
+        burst(at: point, count: 8, speed: 180, color: NSColor(red: 1, green: 0.85, blue: 0.5, alpha: 1),
+              lifetime: 0.25, scale: 0.15)
+        shake(strength: 1.5)
+        apply(damage.hit(at: point, amount: roundDamage), impact: point)
     }
 
     // MARK: - Damage rendering
@@ -91,9 +154,15 @@ final class DeskScene: SKScene {
         case .intact:
             break
         case .crack, .bigCrack:
+            // A round that adds to a crack without changing it leaves the drawn cracks alone.
+            guard site.stage > result.previousStage || !result.merged.isEmpty else { break }
             drawCracks(for: site)
             SoundFX.shared.play(.crack, volume: site.stage == .crack ? 0.6 : 1)
         case .shattered:
+            // Glass that is already shattered breaks further only once per hammer's worth of damage.
+            let crossed = Int(site.damage + 1e-9) > Int(result.previousDamage + 1e-9)
+            guard result.previousStage < .shattered || crossed else { break }
+            shatters += 1
             if result.previousStage < .bigCrack { drawCracks(for: site, stage: .bigCrack) }
             let radius = min(55 + 14 * CGFloat(site.damage - 3), 170)
             shatter(around: site.centre, radius: radius, seed: site.id &* 31 &+ Int(site.damage * 10), impact: impact)
@@ -198,7 +267,65 @@ final class DeskScene: SKScene {
         return SKTexture(cgImage: context.makeImage()!)
     }
 
+    private func mark(at point: CGPoint) {
+        let mark = SKSpriteNode(texture: DeskScene.bulletHoles.randomElement()!)
+        mark.position = point
+        mark.zRotation = .random(in: 0..<2 * .pi)
+        markLayer.addChild(mark)
+        if markLayer.children.count > maxMarks, let oldest = markLayer.children.first {
+            oldest.removeFromParent()
+        }
+    }
+
     // MARK: - Juice
+
+    private func flash(at point: CGPoint) {
+        let flash = SKSpriteNode(texture: DeskScene.dot, size: CGSize(width: 22, height: 22))
+        flash.color = NSColor(red: 1, green: 0.92, blue: 0.7, alpha: 1)
+        flash.colorBlendFactor = 1
+        flash.blendMode = .add
+        flash.position = point
+        flash.zPosition = 3
+        world.addChild(flash)
+        flash.run(.sequence([.group([.scale(to: 1.7, duration: 0.06), .fadeOut(withDuration: 0.06)]),
+                             .removeFromParent()]))
+    }
+
+    /// Spent brass flying off to the right of the gun while the trigger is held.
+    private func setUpShells() {
+        shells.particleTexture = DeskScene.shell
+        shells.particleBirthRate = 0
+        shells.particleLifetime = 1.2
+        shells.particleSpeed = 260
+        shells.particleSpeedRange = 80
+        shells.emissionAngle = .pi / 3
+        shells.emissionAngleRange = 0.5
+        shells.yAcceleration = -1100
+        shells.particleRotationRange = 2 * .pi
+        shells.particleRotationSpeed = 14
+        shells.particleAlphaSpeed = -0.6
+        shells.zPosition = 4
+        shells.targetNode = world
+        world.addChild(shells)
+    }
+
+    private func announce(_ text: String) {
+        childNode(withName: "announcement")?.removeFromParent()
+        let label = SKLabelNode(text: text)
+        label.fontName = "HelveticaNeue-Bold"
+        label.fontSize = 22
+        label.fontColor = .white
+        label.verticalAlignmentMode = .center
+        let plate = SKShapeNode(rectOf: CGSize(width: label.frame.width + 36, height: 40), cornerRadius: 20)
+        plate.fillColor = NSColor(white: 0, alpha: 0.6)
+        plate.strokeColor = .clear
+        plate.addChild(label)
+        plate.name = "announcement"
+        plate.position = CGPoint(x: size.width / 2, y: 70)
+        plate.zPosition = 20
+        addChild(plate)
+        plate.run(.sequence([.wait(forDuration: 0.9), .fadeOut(withDuration: 0.3), .removeFromParent()]))
+    }
 
     private func shake(strength: CGFloat) {
         world.removeAction(forKey: "shake")
@@ -254,6 +381,44 @@ final class DeskScene: SKScene {
         return SKTexture(cgImage: context.makeImage()!)
     }()
 
+    /// A few bullet-hole variants: a dark puncture with a pale rim and short radial cracks.
+    private static let bulletHoles: [SKTexture] = (0..<4).map { variant in
+        let side: CGFloat = 28, scale: CGFloat = 2
+        let context = CGContext(data: nil, width: Int(side * scale), height: Int(side * scale), bitsPerComponent: 8,
+                                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.scaleBy(x: scale, y: scale)
+        let centre = CGPoint(x: side / 2, y: side / 2)
+        let cracks = CrackArt.cracks(around: centre, reach: 11, rings: false, seed: 900 + variant)
+        context.setLineCap(.round)
+        context.translateBy(x: 0.4, y: -0.4)
+        context.addPath(cracks)
+        context.setStrokeColor(CGColor(gray: 0, alpha: 0.45))
+        context.setLineWidth(1.2)
+        context.strokePath()
+        context.translateBy(x: -0.4, y: 0.4)
+        context.addPath(cracks)
+        context.setStrokeColor(CGColor(gray: 1, alpha: 0.8))
+        context.setLineWidth(0.6)
+        context.strokePath()
+        context.setFillColor(CGColor(gray: 1, alpha: 0.45))
+        context.fillEllipse(in: CGRect(x: centre.x - 3.6, y: centre.y - 3.6, width: 7.2, height: 7.2))
+        context.setFillColor(CGColor(gray: 0.05, alpha: 0.9))
+        context.fillEllipse(in: CGRect(x: centre.x - 2.6, y: centre.y - 2.6, width: 5.2, height: 5.2))
+        return SKTexture(cgImage: context.makeImage()!)
+    }
+
+    private static let shell: SKTexture = {
+        let context = CGContext(data: nil, width: 6, height: 14, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 0.86, green: 0.66, blue: 0.27, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 6, height: 14))
+        context.setFillColor(CGColor(red: 1, green: 0.88, blue: 0.55, alpha: 1))
+        context.fill(CGRect(x: 1, y: 0, width: 1.5, height: 14))
+        return SKTexture(cgImage: context.makeImage()!)
+    }()
+
     // MARK: - Frame timing
 
     private var windowStart: TimeInterval = 0
@@ -264,6 +429,13 @@ final class DeskScene: SKScene {
     func resetFrameStats() { worstFPS = .infinity; windowStart = 0 }
 
     override func update(_ currentTime: TimeInterval) {
+        if let aim = trigger {
+            if nextRoundAt == 0 { nextRoundAt = currentTime }
+            while currentTime >= nextRoundAt {
+                fireRound(at: aim)
+                nextRoundAt += roundInterval
+            }
+        }
         if windowStart == 0 { windowStart = currentTime; framesInWindow = 0 }
         framesInWindow += 1
         if currentTime - windowStart >= 1 {
