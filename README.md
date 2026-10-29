@@ -6,7 +6,20 @@ bottom. Built from scratch with AI as an homage to the 2000s classic *Desktop De
 **It never touches your files.** The app takes a snapshot of your screen and wrecks the picture. Press
 Esc and your real desktop is exactly as you left it.
 
-> Work in progress — more tools and a proper release are on the way.
+## Install
+
+Requires macOS 14 or later, on Apple silicon or Intel.
+
+1. Download **ExtremeCleanup-<version>.zip** from [Releases](../../releases/latest), unzip it and move
+   **Extreme Cleanup** to Applications.
+2. Open it. The app is not from the App Store and is not notarised by Apple, so macOS stops it the first time:
+   - **macOS 15 and later:** the warning only offers *Done*. Open **System Settings › Privacy & Security**, scroll
+     down to the message about Extreme Cleanup, click **Open Anyway** and confirm.
+   - **macOS 14:** right-click the app, choose **Open**, then **Open** again.
+3. Allow **Screen Recording** when asked (**System Settings › Privacy & Security › Screen & System Audio
+   Recording**), then quit and reopen the app.
+
+You only do this once. Later versions are signed with the same certificate, so they keep the permission.
 
 ## Controls
 
@@ -29,6 +42,9 @@ then press **Start the cleanup**. Your choices are remembered.
 - **Screen Recording** — to take the snapshot it smashes. Without it you get your wallpaper instead.
 - **Automation → Finder** — read-only, to find where your desktop icons are.
 
+Newer macOS versions now and then ask you to confirm that an app may keep recording the screen. That happens to
+every app that captures the screen; choose *Allow* to keep playing.
+
 ## Build
 
 Requires macOS 14+ and the Xcode Command Line Tools.
@@ -38,7 +54,14 @@ scripts/bundle.sh                  # builds build/ExtremeCleanup.app
 open build/ExtremeCleanup.app
 ```
 
+Without the release signing certificate the build is signed ad-hoc: it runs the same, but macOS asks for Screen
+Recording again after every rebuild.
+
 ## Credits
 
 Inspired by *Desktop Destroyer* (freeware, 2000s). No code, art or sound from the original is used:
 everything here is written from scratch, and all sounds and the music are synthesised in code.
+
+## License
+
+[MIT](LICENSE) © 2026 boroda studio.
