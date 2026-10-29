@@ -10,16 +10,34 @@ Esc and your real desktop is exactly as you left it.
 
 Requires macOS 14 or later, on Apple silicon or Intel.
 
-1. Download **ExtremeCleanup-<version>.zip** from [Releases](../../releases/latest), unzip it and move
-   **Extreme Cleanup** to Applications.
-2. Open it. The app is not from the App Store and is not notarised by Apple, so macOS stops it the first time:
-   - **macOS 15 and later:** the warning only offers *Done*. Open **System Settings › Privacy & Security**, scroll
-     down to the message about Extreme Cleanup, click **Open Anyway** and confirm.
+> **Heads-up: macOS will warn you on first launch.** The app isn't sold through Apple or notarised by Apple, so
+> macOS shows a scary dialog saying it can't check the app for malware, with a big **Move to Trash** button. Don't
+> trash it: click **Done** and follow step 2. The full source is in this repo if you'd rather check it, or build
+> it yourself (see [Build](#build)).
+>
+> **Prefer not to run unverified software?** A web version you can try in the browser is on the way.
+
+1. Download **ExtremeCleanup-<version>.zip** from [Releases](../../releases/latest) **in your browser**, unzip it
+   and move **Extreme Cleanup** to Applications.
+2. Open it. macOS stops it the first time:
+   - **macOS 15 and later:** click **Done** on the warning. Open **System Settings › Privacy & Security**, scroll
+     down to the message about Extreme Cleanup, click **Open Anyway** and confirm with your password or Touch ID.
    - **macOS 14:** right-click the app, choose **Open**, then **Open** again.
 3. Allow **Screen Recording** when asked (**System Settings › Privacy & Security › Screen & System Audio
    Recording**), then quit and reopen the app.
 
-You only do this once. Later versions are signed with the same certificate, so they keep the permission.
+You only do this once. Later versions are signed with the same certificate, so they open straight away and keep
+the permission.
+
+### "ExtremeCleanup can't be opened", with only an OK button?
+
+That happens when a messenger such as Telegram saved the file for you: macOS then refuses to run it at all and
+offers no **Open Anyway**. Download the zip from [Releases](../../releases/latest) in your browser instead. If you
+already have the app and are comfortable with Terminal, this clears the block:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/ExtremeCleanup.app
+```
 
 ## Controls
 
