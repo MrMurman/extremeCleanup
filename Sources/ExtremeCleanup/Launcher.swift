@@ -5,10 +5,10 @@ struct LaunchSettings: Equatable, CustomStringConvertible {
     var displays: [CGDirectDisplayID]
     var controls: CGDirectDisplayID
     var sound: Bool
-    var tool: DeskScene.Tool
+    var music: Bool
 
     var description: String {
-        "displays=\(displays) controls=\(controls) sound=\(sound) tool=\(tool.rawValue)"
+        "displays=\(displays) controls=\(controls) sound=\(sound) music=\(music)"
     }
 
     static func load(from defaults: UserDefaults, home: NSScreen) -> LaunchSettings {
@@ -16,7 +16,7 @@ struct LaunchSettings: Equatable, CustomStringConvertible {
         let settings = LaunchSettings(
             displays: saved, controls: CGDirectDisplayID(defaults.integer(forKey: "controls")),
             sound: defaults.object(forKey: "sound") as? Bool ?? true,
-            tool: DeskScene.Tool(rawValue: defaults.string(forKey: "tool") ?? "") ?? .hammer)
+            music: defaults.object(forKey: "music") as? Bool ?? true)
         return settings.fitted(home: home)
     }
 
@@ -24,7 +24,7 @@ struct LaunchSettings: Equatable, CustomStringConvertible {
         defaults.set(displays.map { Int($0) }, forKey: "displays")
         defaults.set(Int(controls), forKey: "controls")
         defaults.set(sound, forKey: "sound")
-        defaults.set(tool.rawValue, forKey: "tool")
+        defaults.set(music, forKey: "music")
     }
 
     /// Drops displays that are no longer connected; falls back to the launcher's own display.
@@ -41,7 +41,7 @@ struct LaunchSettings: Equatable, CustomStringConvertible {
     }
 }
 
-/// The shareware-style starter window: where to play, sound, starting tool, and a few words about the toy.
+/// The shareware-style starter window: where to play, sound and music, and a few words about the toy.
 @MainActor
 final class Launcher {
     static let archiveURL = URL(string: "https://gamia-archive.fandom.com/wiki/Desktop_Destroyer_Game")!
@@ -52,13 +52,14 @@ final class Launcher {
     ]
 
     var onStart: ((LaunchSettings) -> Void)?
+    var onChange: ((LaunchSettings) -> Void)?
     var onQuit: (() -> Void)?
     private(set) var settings: LaunchSettings
     private let window: LauncherWindow
     private var displayChecks: [(CGDirectDisplayID, RetroToggle)] = []
     private var controlRadios: [(CGDirectDisplayID, RetroToggle)] = []
     private var soundRadios: [RetroToggle] = []
-    private var toolRadios: [RetroToggle] = []
+    private var musicRadios: [RetroToggle] = []
 
     var isVisible: Bool { window.isVisible }
     var frame: CGRect { window.frame }
@@ -141,25 +142,27 @@ final class Launcher {
 
         let half = (inner - 8) / 2
         let sound = RetroGroup(title: "Sound", frame: CGRect(x: pad, y: y, width: half, height: 44))
-        let tool = RetroGroup(title: "Starting tool", frame: CGRect(x: pad + half + 8, y: y, width: half, height: 44))
-        soundRadios = ["On", "Off"].enumerated().map { i, label in
-            let radio = RetroToggle(kind: .radio, label: label, frame: CGRect(x: 12 + CGFloat(i) * 70, y: 20, width: 64, height: 18))
-            radio.onChange = { [weak self] _ in self?.settings.sound = i == 0; self?.refresh() }
-            sound.addSubview(radio)
-            return radio
+        let music = RetroGroup(title: "Music", frame: CGRect(x: pad + half + 8, y: y, width: half, height: 44))
+        func onOff(in group: RetroGroup, set: @escaping (inout LaunchSettings, Bool) -> Void) -> [RetroToggle] {
+            ["On", "Off"].enumerated().map { i, label in
+                let radio = RetroToggle(kind: .radio, label: label,
+                                        frame: CGRect(x: 12 + CGFloat(i) * 70, y: 20, width: 64, height: 18))
+                radio.onChange = { [weak self] _ in
+                    guard let self else { return }
+                    set(&settings, i == 0)
+                    refresh()
+                }
+                group.addSubview(radio)
+                return radio
+            }
         }
-        toolRadios = [DeskScene.Tool.hammer, .minigun].enumerated().map { i, kind in
-            let radio = RetroToggle(kind: .radio, label: kind.rawValue,
-                                    frame: CGRect(x: 12 + CGFloat(i) * 84, y: 20, width: 80, height: 18))
-            radio.onChange = { [weak self] _ in self?.settings.tool = kind; self?.refresh() }
-            tool.addSubview(radio)
-            return radio
-        }
+        soundRadios = onOff(in: sound) { $0.sound = $1 }
+        musicRadios = onOff(in: music) { $0.music = $1 }
         panel.addSubview(sound)
-        panel.addSubview(tool)
+        panel.addSubview(music)
         y += 44 + 6
 
-        let keys = Retro.label("In play: 1 / 2 switch tools  ·  C sweeps up  ·  Esc comes back here",
+        let keys = Retro.label("In play: 1 / 2 switch tools  ·  C sweeps up  ·  M music  ·  Esc comes back here",
                                size: 10, color: Retro.ink.withAlphaComponent(0.6))
         keys.frame = CGRect(x: pad + 2, y: y, width: inner, height: 14)
         panel.addSubview(keys)
@@ -214,7 +217,8 @@ final class Launcher {
             radio.isEnabled = settings.displays.contains(id)
         }
         for (i, radio) in soundRadios.enumerated() { radio.isOn = (i == 0) == settings.sound }
-        for (radio, kind) in zip(toolRadios, [DeskScene.Tool.hammer, .minigun]) { radio.isOn = settings.tool == kind }
+        for (i, radio) in musicRadios.enumerated() { radio.isOn = (i == 0) == settings.music }
+        onChange?(settings)
     }
 }
 

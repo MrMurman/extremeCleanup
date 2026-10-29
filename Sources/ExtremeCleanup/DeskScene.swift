@@ -4,13 +4,16 @@ final class DeskScene: SKScene {
     enum Tool: String { case hammer = "Hammer", minigun = "Minigun" }
 
     var tool: Tool = .hammer {
-        didSet { stopFiring(); announce(tool.rawValue); toolbelt?.select(tool) }
+        didSet { stopFiring(); announce(tool.rawValue); toolbelt?.select(tool); pointer.tool = tool }
     }
     /// Asks the app to switch every display to a tool picked on the belt.
     var onPickTool: ((Tool) -> Void)?
     /// Asks the app to sweep every display, when the broom on the belt is clicked.
     var onSweepRequest: (() -> Void)?
+    var onClean: (() -> Void)?
     private var toolbelt: Toolbelt?
+    private let pointer = ToolCursor()
+    private var pointerRefresh = 0
 
     private let world = SKNode()
     /// The snapshot and its cracks, masked so that holes show what lies behind.
@@ -115,6 +118,9 @@ final class DeskScene: SKScene {
         }
         debugLayer.isHidden = true
         addChild(debugLayer)
+        pointer.zPosition = 100
+        pointer.isHidden = true
+        addChild(pointer)
 
         if showsControls {
             let belt = Toolbelt(screenSize: size, broomTexture: DeskScene.broomTexture, broomSize: DeskScene.broomSize,
@@ -146,6 +152,11 @@ final class DeskScene: SKScene {
     var beltPockets: [CGPoint] { toolbelt?.pocketCentres ?? [] }
     var beltCharm: CGPoint? { toolbelt?.charmCentre }
     var beltVisible: Bool { toolbelt.map { !$0.isHidden } ?? false }
+    var pointerVisible: Bool { !pointer.isHidden }
+    var pointerPosition: CGPoint { pointer.position }
+    var pointerSwinging: Bool { pointer.isSwinging }
+    var pointerSpinning: Bool { pointer.isSpinning }
+    var pointerHotspotOffset: CGPoint { pointer.hotspotOffset }
     /// Centres of the icons still on the glass.
     var iconCentres: [CGPoint] { icons.map { CGPoint(x: $0.midX, y: $0.midY) } }
 
@@ -164,7 +175,7 @@ final class DeskScene: SKScene {
         lookToward(point)
         if toolbelt?.handleClick(at: point) == true { return }
         switch tool {
-        case .hammer: hammer(at: point)
+        case .hammer: pointer.swing { [weak self] in self?.hammer(at: point) }
         case .minigun: startFiring(at: point)
         }
     }
@@ -188,18 +199,20 @@ final class DeskScene: SKScene {
         guard broom == nil, !isClean else { return }
         trigger = point
         nextRoundAt = 0
-        shells.position = point
+        shells.position = CGPoint(x: point.x + ToolCursor.ejectOffset.x, y: point.y + ToolCursor.ejectOffset.y)
         shells.particleBirthRate = CGFloat(1 / roundInterval)
+        pointer.spin(true)
     }
 
     func aim(at point: CGPoint) {
         trigger = point
-        shells.position = point
+        shells.position = CGPoint(x: point.x + ToolCursor.ejectOffset.x, y: point.y + ToolCursor.ejectOffset.y)
     }
 
     func stopFiring() {
         trigger = nil
         shells.particleBirthRate = 0
+        pointer.spin(false)
     }
 
     private func fireRound(at aim: CGPoint) {
@@ -492,6 +505,7 @@ final class DeskScene: SKScene {
                 self.theVoid.removeFromParent()
                 self.broom = nil
                 self.isClean = true
+                self.onClean?()
             },
             .wait(forDuration: 1),
             .run { [weak self] in self?.showCleanHint() },
@@ -721,6 +735,24 @@ final class DeskScene: SKScene {
     /// Lowest frames-per-second seen over any one-second window since the last reset.
     private(set) var worstFPS: Double = .infinity
 
+    /// Keeps the tool on the mouse on this display, and the system arrow wherever no overlay is under it.
+    private func trackPointer() {
+        guard let window = view?.window else { return }
+        let mouse = NSEvent.mouseLocation
+        let inside = window.frame.contains(mouse)
+        // Only the active app can hide the system pointer; while another app is active the tool steps aside rather
+        // than draw under that app's pointer, and the next click on the game brings it back.
+        pointer.isHidden = !inside || !NSApp.isActive
+        if inside { pointer.position = CGPoint(x: mouse.x - window.frame.minX, y: mouse.y - window.frame.minY) }
+        guard NSApp.isActive else { return }
+        let overOverlay = NSApp.windows.contains { $0 is OverlayWindow && $0.isVisible && $0.frame.contains(mouse) }
+        let wanted = overOverlay ? ToolCursor.blank : NSCursor.arrow
+        // macOS can put its own pointer back without `NSCursor.current` noticing, so over the game the hidden one
+        // is re-applied a few times a second rather than only when it looks lost.
+        pointerRefresh = (pointerRefresh + 1) % 15
+        if NSCursor.current != wanted || (inside && pointerRefresh == 0) { wanted.set() }
+    }
+
     func resetFrameStats() { worstFPS = .infinity; windowStart = 0 }
 
     override func update(_ currentTime: TimeInterval) {
@@ -730,6 +762,7 @@ final class DeskScene: SKScene {
         }
         let dt = lastUpdate == 0 ? 0 : min(currentTime - lastUpdate, 0.1)
         lastUpdate = currentTime
+        trackPointer()
         gaze = gaze.moved(toward: gazeTarget, by: 0.06)
         theVoid.look(gaze)
         theVoid.advance(by: dt)

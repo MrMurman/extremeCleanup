@@ -250,6 +250,22 @@ enum Demo {
         try? await Task.sleep(for: .seconds(1))
         check("launcher is up on launch", launcher.isVisible)
         check("nothing captured before Start", Snapshot.captures == 0 && !app.isPlaying)
+        let music = Music.shared
+        for _ in 0..<60 where music.loop == nil { try? await Task.sleep(for: .milliseconds(50)) }
+        try? await Task.sleep(for: .seconds(1.5))
+        if let loop = music.loop {
+            let seconds = Double(loop.left.count) / 44_100
+            check(String(format: "music renders in under 1 s (%.2f s)", music.renderSeconds), music.renderSeconds < 1)
+            check(String(format: "loop is at least 60 s (%.1f s)", seconds), seconds >= 60)
+            var steps = zip(loop.left.dropFirst(), loop.left).map { abs($0 - $1) }
+            steps.sort()
+            let typical = steps[Int(Double(steps.count) * 0.999)]
+            let seam = max(abs(loop.left[0] - loop.left.last!), abs(loop.right[0] - loop.right.last!))
+            check(String(format: "seamless loop point (jump %.4f, 99.9th pct step %.4f)", seam, typical), seam <= typical)
+        } else {
+            check("music rendered", false)
+        }
+        check("music plays in the launcher", abs(music.volume - 0.55) < 0.01)
 
         let home = launcher.screen
         let homeID = Snapshot.displayID(of: home)
@@ -276,7 +292,9 @@ enum Demo {
         }
 
         // First go: this display only, sound off, minigun.
-        launcher.choose(LaunchSettings(displays: [homeID], controls: homeID, sound: false, tool: .minigun))
+        launcher.choose(LaunchSettings(displays: [homeID], controls: homeID, sound: false, music: false))
+        try? await Task.sleep(for: .seconds(1.5))
+        check("music off in the launcher is silent", music.volume == 0)
         launcher.start()
         await waitForPlay()
         guard let scene = app.scenes.first else {
@@ -287,7 +305,7 @@ enum Demo {
         check("launcher hidden during play", !launcher.isVisible)
         check("only the checked display is covered", app.windows.map(\.frame) == [home.frame])
         check("toolbelt on the controls display", scene.beltVisible)
-        check("starting tool honoured (minigun)", scene.tool == .minigun)
+        check("play starts with the hammer", scene.tool == .hammer)
         check("launcher absent from the snapshot", launcherAbsent())
         var played = SoundFX.shared.played
         scene.hammer(at: CGPoint(x: launcherRect.midX, y: launcherRect.midY))
@@ -295,6 +313,7 @@ enum Demo {
         scene.hammer(at: CGPoint(x: launcherRect.midX, y: launcherRect.midY))
         try? await Task.sleep(for: .seconds(1.2))
         check("sound off is silent", SoundFX.shared.played == played)
+        check("music off stays silent in play", music.volume == 0)
         check("shards cut from the launcher's spot", scene.shatters > 0)
 
         app.backToLauncher()
@@ -303,25 +322,36 @@ enum Demo {
 
         // Second go: sound on, hammer, a fresh snapshot.
         let capturesBefore = Snapshot.captures
-        launcher.choose(LaunchSettings(displays: [homeID], controls: homeID, sound: true, tool: .hammer))
+        launcher.choose(LaunchSettings(displays: [homeID], controls: homeID, sound: true, music: true))
         launcher.start()
         await waitForPlay()
         check("second Start takes a fresh snapshot", Snapshot.captures > capturesBefore && app.isPlaying)
         if let again = app.scenes.first {
-            check("starting tool honoured (hammer)", again.tool == .hammer)
+            check("music is quieter in play", abs(music.volume - 0.22) < 0.01)
             check("launcher absent from the second snapshot", launcherAbsent())
             played = SoundFX.shared.played
             again.hammer(at: CGPoint(x: again.size.width * 0.3, y: again.size.height * 0.5))
             try? await Task.sleep(for: .seconds(0.3))
             check("sound on plays", SoundFX.shared.played > played)
+            app.toggleMusic()
+            try? await Task.sleep(for: .seconds(1))
+            let muted = music.volume == 0
+            app.toggleMusic()
+            try? await Task.sleep(for: .seconds(1))
+            check("M toggles the music in play", muted && abs(music.volume - 0.22) < 0.01)
+            again.sweep()
+            for _ in 0..<100 where !again.isClean { try? await Task.sleep(for: .milliseconds(50)) }
+            try? await Task.sleep(for: .seconds(2.5))
+            check("music fades out in the clean finale", again.isClean && music.volume == 0)
         }
         app.backToLauncher()
-        try? await Task.sleep(for: .seconds(0.5))
+        try? await Task.sleep(for: .seconds(1.5))
+        check("music comes back with the launcher", abs(music.volume - 0.55) < 0.01)
 
         // Third go, given a second display: play there only, with the toolbelt there too.
         if let other = others.first {
             let otherID = Snapshot.displayID(of: other)
-            launcher.choose(LaunchSettings(displays: [otherID], controls: otherID, sound: true, tool: .hammer))
+            launcher.choose(LaunchSettings(displays: [otherID], controls: otherID, sound: true, music: true))
             launcher.start()
             await waitForPlay()
             check("other display only: this one stays uncovered", app.windows.map(\.frame) == [other.frame])
@@ -329,7 +359,7 @@ enum Demo {
             app.backToLauncher()
             try? await Task.sleep(for: .seconds(0.5))
             // Both displays, controls on the other one: only that one gets the belt.
-            launcher.choose(LaunchSettings(displays: [homeID, otherID], controls: otherID, sound: false, tool: .minigun))
+            launcher.choose(LaunchSettings(displays: [homeID, otherID], controls: otherID, sound: false, music: false))
             launcher.start()
             await waitForPlay()
             let belts = zip(app.shots, app.scenes).map { (Snapshot.displayID(of: $0.screen), $1.beltVisible) }
@@ -378,6 +408,96 @@ enum Demo {
         var total = 0
         for i in 0..<pa.count where i % 4 != 3 { total += abs(Int(pa[i]) - Int(pb[i])) }
         return Double(total) / Double(pa.count / 4 * 3)
+    }
+
+    static func cursor(scene: DeskScene, screen: NSScreen, select: (DeskScene.Tool) -> Void, into dir: URL) async {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var report = ""
+        func check(_ name: String, _ ok: Bool) { report += (ok ? "PASS " : "FAIL ") + name + "\n" }
+        let mainHeight = NSScreen.screens[0].frame.height
+        func warp(to p: CGPoint) { CGWarpMouseCursorPosition(CGPoint(x: p.x, y: mainHeight - p.y)) }
+        let home = NSEvent.mouseLocation
+
+        // The art alone, with its hotspot (red), grip (blue) and case ejection (green) marked, for a visual check.
+        for tool in [DeskScene.Tool.hammer, .minigun] {
+            let art = ToolModels.cursor(tool)
+            let scale = 4.0
+            let w = Int(art.size.width * scale), h = Int(art.size.height * scale)
+            guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
+            context.setFillColor(CGColor(gray: 0.85, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            context.draw(art.frames[0].cgImage(), in: CGRect(x: 0, y: 0, width: w, height: h))
+            for (point, color) in [(art.hotspot, CGColor(red: 1, green: 0, blue: 0, alpha: 1)),
+                                   (art.grip, CGColor(red: 0, green: 0, blue: 1, alpha: 1)),
+                                   (art.eject, CGColor(red: 0, green: 0.8, blue: 0, alpha: 1))] {
+                context.setFillColor(color)
+                context.fillEllipse(in: CGRect(x: point.x * scale - 5, y: point.y * scale - 5, width: 10, height: 10))
+            }
+            if let image = context.makeImage() { write(image, to: dir.appendingPathComponent("art-\(tool.rawValue).png")) }
+            check("\(tool.rawValue) art has \(art.frames.count) frame(s)", art.frames.count == (tool == .hammer ? 1 : 6))
+        }
+
+        // A scripted launch has no click to make the app active, which hiding the pointer needs.
+        NSApp.activate(ignoringOtherApps: true)
+        let centre = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
+        warp(to: centre)
+        try? await Task.sleep(for: .seconds(0.5))
+        let local = CGPoint(x: centre.x - screen.frame.minX, y: centre.y - screen.frame.minY)
+        check("tool follows the mouse (app active: \(NSApp.isActive))", scene.pointerVisible && hypot(scene.pointerPosition.x - local.x,
+                                                                     scene.pointerPosition.y - local.y) < 2)
+        check("hotspot sits on the pointer", hypot(scene.pointerHotspotOffset.x, scene.pointerHotspotOffset.y) < 0.5)
+        check("system pointer hidden over the game", NSCursor.current == ToolCursor.blank)
+
+        let sites = scene.damagedSites
+        scene.press(at: local)
+        check("hammer click starts a swing", scene.pointerSwinging)
+        let landedEarly = scene.damagedSites > sites
+        try? await Task.sleep(for: .seconds(0.4))
+        check("the blow lands as the head comes down", !landedEarly && scene.damagedSites > sites && !scene.pointerSwinging)
+        for _ in 0..<6 { scene.press(at: local) }
+        try? await Task.sleep(for: .seconds(0.4))
+        check("rapid clicks all land", scene.damagedSites >= 1 && !scene.pointerSwinging)
+
+        select(.minigun)
+        try? await Task.sleep(for: .seconds(0.3))
+        check("minigun idle: barrels still", !scene.pointerSpinning)
+        scene.press(at: CGPoint(x: local.x - 200, y: local.y))
+        try? await Task.sleep(for: .seconds(0.5))
+        check("firing spins the barrels", scene.pointerSpinning)
+        scene.stopFiring()
+        check("release stops the barrels", !scene.pointerSpinning)
+
+        if let other = NSScreen.screens.first(where: { $0 != screen }) {
+            warp(to: CGPoint(x: other.frame.midX, y: other.frame.midY))
+            try? await Task.sleep(for: .seconds(0.5))
+            check("off the game: system arrow back, tool hidden", NSCursor.current == NSCursor.arrow && !scene.pointerVisible)
+        } else {
+            report += "SKIP other-display pointer check: one display\n"
+        }
+        warp(to: centre)
+        NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.apple.finder" }?.activate()
+        try? await Task.sleep(for: .seconds(0.8))
+        check("another app active: tool steps aside (active \(NSApp.isActive), tool \(scene.pointerVisible))", !NSApp.isActive && !scene.pointerVisible)
+        NSApp.activate(ignoringOtherApps: true)
+        try? await Task.sleep(for: .seconds(0.5))
+        check("active again: tool back (active \(NSApp.isActive), tool \(scene.pointerVisible))", NSApp.isActive && scene.pointerVisible)
+
+        // Out to the other display and back several times, the likeliest way to lose the hidden pointer.
+        if let other = NSScreen.screens.first(where: { $0 != screen }) {
+            var lost = 0
+            for _ in 0..<5 {
+                warp(to: CGPoint(x: other.frame.midX, y: other.frame.midY))
+                try? await Task.sleep(for: .seconds(0.3))
+                warp(to: centre)
+                try? await Task.sleep(for: .seconds(0.5))
+                if (NSCursor.currentSystem?.image.size.width ?? 99) > 1 { lost += 1 }
+            }
+            check("system pointer stays hidden after crossing displays (\(lost)/5 lost)", lost == 0)
+        }
+        warp(to: home)
+        try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
     }
 
     private static func snapshot(_ screen: NSScreen) async -> CGImage? {

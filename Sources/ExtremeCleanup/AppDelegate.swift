@@ -7,6 +7,11 @@ final class OverlayWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
+/// Declares the hidden pointer as this view's own, so macOS re-applies it whenever the mouse is over the game.
+final class OverlayView: SKView {
+    override func resetCursorRects() { addCursorRect(bounds, cursor: ToolCursor.blank) }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var windows: [OverlayWindow] = []
@@ -23,18 +28,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings.save(to: defaults)
             Task { await self.play(settings) }
         }
+        launcher.onChange = { Music.shared.isEnabled = $0.music }
         launcher.onQuit = { NSApp.terminate(nil) }
         return launcher
     }()
 
     /// `--self-check <dir>`: re-capture the screen with the overlay up, write a pixel diff report, quit.
     private let selfCheckDir = AppDelegate.directory(after: "--self-check")
-    /// `--demo-hammer|minigun|void|sweep|belt <dir>`: scripted run on the main display, with captures and a report.
+    /// `--demo-hammer|minigun|void|sweep|belt|cursor <dir>`: scripted run on the main display, with captures and a report.
     private let hammerDemoDir = AppDelegate.directory(after: "--demo-hammer")
     private let minigunDemoDir = AppDelegate.directory(after: "--demo-minigun")
     private let voidDemoDir = AppDelegate.directory(after: "--demo-void")
     private let sweepDemoDir = AppDelegate.directory(after: "--demo-sweep")
     private let beltDemoDir = AppDelegate.directory(after: "--demo-belt")
+    private let cursorDemoDir = AppDelegate.directory(after: "--demo-cursor")
     /// `--demo-launcher <dir>`: drives the launcher through Start, Esc and a second Start; `--demo-recall <dir>`
     /// checks on a later launch that the choices came back.
     private let launcherDemoDir = AppDelegate.directory(after: "--demo-launcher")
@@ -51,8 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        /// `--export-music <file.wav>`: write the theme and quit.
+        if let path = AppDelegate.argument(after: "--export-music") {
+            try? Music.export(to: URL(fileURLWithPath: path))
+            NSApp.terminate(nil)
+            return
+        }
         installKeys()
-        let scripted = [selfCheckDir, hammerDemoDir, minigunDemoDir, voidDemoDir, sweepDemoDir, beltDemoDir]
+        Music.shared.prepare()
+        let scripted = [selfCheckDir, hammerDemoDir, minigunDemoDir, voidDemoDir, sweepDemoDir, beltDemoDir, cursorDemoDir]
         guard scripted.allSatisfy({ $0 == nil }) else {
             Task { await runScripted() }
             return
@@ -74,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The pre-launcher scripted runs: straight into play on the main display.
     private func runScripted() async {
         let main = Snapshot.displayID(of: NSScreen.screens[0])
-        await play(LaunchSettings(displays: [main], controls: main, sound: true, tool: .hammer))
+        await play(LaunchSettings(displays: [main], controls: main, sound: true, music: true))
         if let dir = selfCheckDir {
             try? await Task.sleep(for: .seconds(1))
             await SelfCheck.run(shots: shots, icons: DesktopIcons.read(), into: dir)
@@ -89,6 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await Demo.belt(scene: scene, screen: shot.screen, into: dir)
             } else if let dir = sweepDemoDir {
                 await Demo.sweep(scene: scene, screen: shot.screen, iconsBefore: DesktopIcons.read(), into: dir)
+            } else if let dir = cursorDemoDir {
+                await Demo.cursor(scene: scene, screen: shot.screen, select: { [weak self] in self?.select($0) }, into: dir)
             } else if let dir = voidDemoDir {
                 await Demo.void(scene: scene, screen: shot.screen, into: dir)
             }
@@ -104,13 +120,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defer { isStarting = false }
         launcher.hide()
         SoundFX.shared.isEnabled = settings.sound
+        Music.shared.isEnabled = settings.music
+        Music.shared.set(.play)
         let screens = NSScreen.screens.filter { settings.displays.contains(Snapshot.displayID(of: $0)) }
         let shots = await Snapshot.captureAll(screens)
         let icons = DesktopIcons.read()
         let windowFrames = await Snapshot.windowFrames()
         self.shots = shots
         show(shots, icons: DesktopIcons.uncovered(icons, by: windowFrames), controls: settings.controls)
-        select(settings.tool)
+        select(.hammer)
     }
 
     /// Esc during play: drop the overlays and bring the launcher back for another go.
@@ -123,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scenes.removeAll()
         shots.removeAll()
         NSCursor.arrow.set()
+        Music.shared.set(.launcher)
         launcher.show()
     }
 
@@ -139,13 +158,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.acceptsMouseMovedEvents = true
             if let space = shot.image.colorSpace { window.colorSpace = NSColorSpace(cgColorSpace: space) }
 
-            let view = SKView(frame: CGRect(origin: .zero, size: shot.screen.frame.size))
+            let view = OverlayView(frame: CGRect(origin: .zero, size: shot.screen.frame.size))
             view.ignoresSiblingOrder = true
             view.preferredFramesPerSecond = shot.screen.maximumFramesPerSecond
             let scene = DeskScene(shot: shot, icons: icons,
                                   showsControls: Snapshot.displayID(of: shot.screen) == controls)
             scene.onPickTool = { [weak self] tool in self?.select(tool) }
             scene.onSweepRequest = { [weak self] in self?.scenes.forEach { $0.sweep() } }
+            scene.onClean = { Music.shared.set(.finale) }
             view.presentScene(scene)
             window.contentView = view
             (view.layer as? CAMetalLayer)?.colorspace = shot.image.colorSpace
@@ -156,9 +176,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate()
     }
 
+    /// M during play; the launcher shows the new choice and it is saved with the next Start.
+    func toggleMusic() {
+        var settings = launcher.settings
+        settings.music.toggle()
+        launcher.choose(settings)
+    }
+
     private func select(_ tool: DeskScene.Tool) {
         scenes.forEach { $0.tool = tool }
-        (tool == .minigun ? NSCursor.crosshair : NSCursor.arrow).set()
     }
 
     private func installKeys() {
@@ -179,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case 53: backToLauncher()  // Esc
             case 2: scenes.forEach { $0.toggleDebug() }  // D
             case 8: scenes.forEach { $0.sweep() }  // C
+            case 46: toggleMusic()  // M
             case 18: select(.hammer)  // 1
             case 19: select(.minigun)  // 2
             default: return event
