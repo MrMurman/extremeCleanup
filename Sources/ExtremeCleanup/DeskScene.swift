@@ -13,6 +13,9 @@ final class DeskScene: SKScene {
     private let crackLayer = SKNode()
     private let markLayer = SKNode()
     private let shardLayer = SKNode()
+    private let tendrilLayer = SKNode()
+    private let theVoid: TheVoid
+    private let tendrils: Tendrils
     private let debugLayer = SKNode()
     private let backdropTexture: SKTexture
     private let snapshot: CGImage
@@ -25,6 +28,10 @@ final class DeskScene: SKScene {
     /// The hole mask is redrawn on every shatter, so it is kept at half resolution.
     private let maskScale: CGFloat = 0.5
     private let maxMarks = 600
+    /// Where the viewer seems to look from, -1...1 on each axis; it eases toward the cursor.
+    private var gaze = CGPoint.zero
+    private var gazeTarget = CGPoint.zero
+    private var lastUpdate: TimeInterval = 0
 
     /// Where the minigun is aimed while the trigger is held.
     private var trigger: CGPoint?
@@ -45,6 +52,8 @@ final class DeskScene: SKScene {
                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         mask.setFillColor(gray: 1, alpha: 1)
         mask.fill(CGRect(x: 0, y: 0, width: mask.width, height: mask.height))
+        theVoid = TheVoid(size: size, dot: DeskScene.dot)
+        tendrils = Tendrils(rimLayer: tendrilLayer, creatureLayer: theVoid.creatureLayer)
         super.init(size: size)
         scaleMode = .resizeFill
         anchorPoint = .zero
@@ -52,6 +61,9 @@ final class DeskScene: SKScene {
 
         let backdrop = SKSpriteNode(texture: backdropTexture, size: size)
         backdrop.anchorPoint = .zero
+        // The void stays out of `world`, so a screen shake reveals more void rather than black edges.
+        theVoid.zPosition = -2
+        tendrilLayer.zPosition = -1
         markLayer.zPosition = 0.5
         crackLayer.zPosition = 1
         shardLayer.zPosition = 2
@@ -59,6 +71,8 @@ final class DeskScene: SKScene {
         surface.addChild(backdrop)
         surface.addChild(markLayer)
         surface.addChild(crackLayer)
+        addChild(theVoid)
+        world.addChild(tendrilLayer)
         world.addChild(surface)
         world.addChild(shardLayer)
         addChild(world)
@@ -93,8 +107,20 @@ final class DeskScene: SKScene {
 
     // MARK: - Input
 
+    override func mouseMoved(with event: NSEvent) {
+        lookToward(event.location(in: self))
+    }
+
+    var creaturesReleased: Int { tendrils.released }
+
+    func lookToward(_ point: CGPoint) {
+        gazeTarget = CGPoint(x: max(-1, min(1, point.x / size.width * 2 - 1)),
+                             y: max(-1, min(1, point.y / size.height * 2 - 1)))
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = event.location(in: self)
+        lookToward(point)
         switch tool {
         case .hammer: hammer(at: point)
         case .minigun: startFiring(at: point)
@@ -102,6 +128,7 @@ final class DeskScene: SKScene {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        lookToward(event.location(in: self))
         if trigger != nil { aim(at: event.location(in: self)) }
     }
 
@@ -211,6 +238,11 @@ final class DeskScene: SKScene {
         maskSprite.anchorPoint = .zero
         surface.maskNode = maskSprite
         glints(at: centre, radius: radius)
+        theVoid.open()
+        tendrils.swallow(outline)
+        tendrils.grow(around: polygon, centre: centre, radius: radius, seed: seed) { root in
+            holes.contains { $0.contains(root) }
+        }
     }
 
     private func spawnShard(_ triangle: [CGPoint], centroid: CGPoint, impact: CGPoint) {
@@ -429,6 +461,11 @@ final class DeskScene: SKScene {
     func resetFrameStats() { worstFPS = .infinity; windowStart = 0 }
 
     override func update(_ currentTime: TimeInterval) {
+        let dt = lastUpdate == 0 ? 0 : min(currentTime - lastUpdate, 0.1)
+        lastUpdate = currentTime
+        gaze = gaze.moved(toward: gazeTarget, by: 0.06)
+        theVoid.look(gaze)
+        theVoid.advance(by: dt)
         if let aim = trigger {
             if nextRoundAt == 0 { nextRoundAt = currentTime }
             while currentTime >= nextRoundAt {

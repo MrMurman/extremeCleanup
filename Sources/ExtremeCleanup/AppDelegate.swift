@@ -13,10 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `--self-check <dir>`: re-capture the screen with the overlay up, write a pixel diff report, quit.
     private let selfCheckDir = AppDelegate.directory(after: "--self-check")
-    /// `--demo-hammer <dir>` / `--demo-minigun <dir>`: scripted run of one tool on the main display,
-    /// with captures and a report.
+    /// `--demo-hammer <dir>` / `--demo-minigun <dir>` / `--demo-void <dir>`: scripted run on the main
+    /// display, with captures and a report.
     private let hammerDemoDir = AppDelegate.directory(after: "--demo-hammer")
     private let minigunDemoDir = AppDelegate.directory(after: "--demo-minigun")
+    private let voidDemoDir = AppDelegate.directory(after: "--demo-void")
 
     private static func directory(after flag: String) -> URL? {
         let args = CommandLine.arguments
@@ -45,6 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     await Demo.minigun(scene: scene, screen: shot.screen, into: dir)
                     NSApp.terminate(nil)
                 }
+                if let dir = voidDemoDir {
+                    await Demo.void(scene: scene, screen: shot.screen, into: dir)
+                    NSApp.terminate(nil)
+                }
             }
         }
     }
@@ -58,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             window.isOpaque = true
             window.hasShadow = false
+            window.acceptsMouseMovedEvents = true
             if let space = shot.image.colorSpace { window.colorSpace = NSColorSpace(cgColorSpace: space) }
 
             let view = SKView(frame: CGRect(origin: .zero, size: shot.screen.frame.size))

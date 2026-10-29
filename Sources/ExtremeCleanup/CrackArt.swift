@@ -70,6 +70,31 @@ enum CrackArt {
         }
     }
 
+    /// Wavy strands reaching from a hole's rim toward its centre, as a path relative to `centre`, plus the
+    /// scene points they are rooted at. Roots sit a little outside the rim, so the strands seem to come from
+    /// under the glass; a root where the glass is already gone (`isOpen`) grows nothing.
+    static func tendrils(of polygon: [CGPoint], centre: CGPoint, seed: Int,
+                         isOpen: (CGPoint) -> Bool) -> (path: CGPath, roots: [CGPoint]) {
+        var rng = SeededRandom(seed: seed &+ 15_485_863)
+        let path = CGMutablePath()
+        var roots: [CGPoint] = []
+        for vertex in polygon where rng.range(0...1) < 0.6 {
+            let out = CGPoint(x: (vertex.x - centre.x) * 1.08, y: (vertex.y - centre.y) * 1.08)
+            let root = CGPoint(x: centre.x + out.x, y: centre.y + out.y)
+            guard !isOpen(root) else { continue }
+            roots.append(root)
+            let reach = rng.range(0.3...0.6)
+            let tip = CGPoint(x: out.x * (1 - reach), y: out.y * (1 - reach))
+            let normal = CGPoint(x: -out.y, y: out.x)
+            let bend = rng.range(-0.25...0.25), curl = rng.range(-0.3...0.3)
+            path.move(to: out)
+            path.addCurve(to: tip,
+                          control1: CGPoint(x: out.x * 0.85 + normal.x * bend, y: out.y * 0.85 + normal.y * bend),
+                          control2: CGPoint(x: tip.x * 1.15 + normal.x * curl, y: tip.y * 1.15 + normal.y * curl))
+        }
+        return (path, roots)
+    }
+
     /// Splits a hole polygon into convex triangles fanning out from a point near its centre.
     static func shards(of polygon: [CGPoint], centre: CGPoint, seed: Int) -> [[CGPoint]] {
         var rng = SeededRandom(seed: seed &+ 104_729)
