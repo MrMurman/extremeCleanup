@@ -13,12 +13,20 @@ final class DeskScene: SKScene {
     private let crackLayer = SKNode()
     private let markLayer = SKNode()
     private let shardLayer = SKNode()
+    private let iconLayer = SKNode()
+    private let patchLayer = SKNode()
     private let tendrilLayer = SKNode()
     private let theVoid: TheVoid
     private let tendrils: Tendrils
     private let debugLayer = SKNode()
     private let backdropTexture: SKTexture
     private let snapshot: CGImage
+    private let wallpaper: CGImage
+    /// Desktop icons still stuck to the glass, as tiles (icon plus label) in scene coordinates.
+    private var icons: [CGRect]
+    private(set) var iconsDropped = 0
+    private var broom: SKSpriteNode?
+    private(set) var isClean = false
 
     private var damage = DamageModel()
     private var crackNodes: [Int: SKNode] = [:]
@@ -46,6 +54,9 @@ final class DeskScene: SKScene {
     init(shot: ScreenShot, icons: [DesktopIcon]) {
         backdropTexture = DeskScene.texture(from: shot.image)
         snapshot = shot.image
+        wallpaper = shot.wallpaper
+        let origin = shot.screen.frame.origin
+        self.icons = icons.map(\.tile).filter { shot.screen.frame.contains($0) }.map { $0.offsetBy(dx: -origin.x, dy: -origin.y) }
         let size = shot.screen.frame.size
         mask = CGContext(data: nil, width: Int(size.width / 2), height: Int(size.height / 2), bitsPerComponent: 8,
                          bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -64,17 +75,21 @@ final class DeskScene: SKScene {
         // The void stays out of `world`, so a screen shake reveals more void rather than black edges.
         theVoid.zPosition = -2
         tendrilLayer.zPosition = -1
+        patchLayer.zPosition = 0.25
         markLayer.zPosition = 0.5
         crackLayer.zPosition = 1
         shardLayer.zPosition = 2
+        iconLayer.zPosition = 2.5
         debugLayer.zPosition = 10
         surface.addChild(backdrop)
+        surface.addChild(patchLayer)
         surface.addChild(markLayer)
         surface.addChild(crackLayer)
         addChild(theVoid)
         world.addChild(tendrilLayer)
         world.addChild(surface)
         world.addChild(shardLayer)
+        world.addChild(iconLayer)
         addChild(world)
         setUpShells()
 
@@ -85,10 +100,10 @@ final class DeskScene: SKScene {
         bounds.addLine(to: CGPoint(x: size.width, y: 0))
         bounds.addLine(to: CGPoint(x: size.width, y: size.height * 3))
         physicsBody = SKPhysicsBody(edgeChainFrom: bounds)
+        physicsBody?.categoryBitMask = Category.edge
 
-        let origin = shot.screen.frame.origin
-        for icon in icons where shot.screen.frame.intersects(icon.frame) {
-            let outline = SKShapeNode(rect: icon.frame.offsetBy(dx: -origin.x, dy: -origin.y))
+        for tile in self.icons {
+            let outline = SKShapeNode(rect: tile)
             outline.strokeColor = .systemPink
             outline.lineWidth = 2
             debugLayer.addChild(outline)
@@ -112,6 +127,8 @@ final class DeskScene: SKScene {
     }
 
     var creaturesReleased: Int { tendrils.released }
+    /// Centres of the icons still on the glass.
+    var iconCentres: [CGPoint] { icons.map { CGPoint(x: $0.midX, y: $0.midY) } }
 
     func lookToward(_ point: CGPoint) {
         gazeTarget = CGPoint(x: max(-1, min(1, point.x / size.width * 2 - 1)),
@@ -119,6 +136,7 @@ final class DeskScene: SKScene {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard broom == nil, !isClean else { return }
         let point = event.location(in: self)
         lookToward(point)
         switch tool {
@@ -143,6 +161,7 @@ final class DeskScene: SKScene {
     }
 
     func startFiring(at point: CGPoint) {
+        guard broom == nil, !isClean else { return }
         trigger = point
         nextRoundAt = 0
         shells.position = point
@@ -239,6 +258,7 @@ final class DeskScene: SKScene {
         surface.maskNode = maskSprite
         glints(at: centre, radius: radius)
         theVoid.open()
+        dropIcons(in: outline, impact: impact)
         tendrils.swallow(outline)
         tendrils.grow(around: polygon, centre: centre, radius: radius, seed: seed) { root in
             holes.contains { $0.contains(root) }
@@ -258,6 +278,7 @@ final class DeskScene: SKScene {
         shard.anchorPoint = CGPoint(x: -box.minX / box.width, y: -box.minY / box.height)
 
         let body = SKPhysicsBody(polygonFrom: path)
+        body.categoryBitMask = Category.debris
         body.restitution = 0.15
         body.friction = 0.7
         body.density = 2
@@ -277,21 +298,26 @@ final class DeskScene: SKScene {
 
     /// The snapshot pixels inside `triangle`, cut out on a transparent background.
     private func shardTexture(_ triangle: [CGPoint]) -> SKTexture {
-        let scale = CGFloat(snapshot.width) / size.width
-        let xs = triangle.map(\.x), ys = triangle.map(\.y)
+        cut(triangle, from: snapshot, outlined: true)
+    }
+
+    private func cut(_ polygon: [CGPoint], from image: CGImage, outlined: Bool) -> SKTexture {
+        let scale = CGFloat(image.width) / size.width
+        let xs = polygon.map(\.x), ys = polygon.map(\.y)
         let box = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
         let width = max(Int(ceil(box.width * scale)), 1), height = max(Int(ceil(box.height * scale)), 1)
         let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                space: snapshot.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+                                space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -box.minX, y: -box.minY)
         let clip = CGMutablePath()
-        clip.addLines(between: triangle)
+        clip.addLines(between: polygon)
         clip.closeSubpath()
         context.addPath(clip)
         context.clip()
-        context.draw(snapshot, in: CGRect(origin: .zero, size: size))
+        context.draw(image, in: CGRect(origin: .zero, size: size))
+        guard outlined else { return SKTexture(cgImage: context.makeImage()!) }
         context.setStrokeColor(CGColor(gray: 1, alpha: 0.25))
         context.setLineWidth(1 / scale)
         context.addPath(clip)
@@ -308,6 +334,191 @@ final class DeskScene: SKScene {
             oldest.removeFromParent()
         }
     }
+
+    // MARK: - Icons
+
+    /// Icons whose middle sat on glass that just broke fall out, leaving bare wallpaper behind.
+    private func dropIcons(in hole: CGPath, impact: CGPoint) {
+        let falling = icons.filter { hole.contains(CGPoint(x: $0.midX, y: $0.midY)) }
+        icons.removeAll { tile in falling.contains(tile) }
+        for tile in falling {
+            let corners = [CGPoint(x: tile.minX, y: tile.minY), CGPoint(x: tile.maxX, y: tile.minY),
+                           CGPoint(x: tile.maxX, y: tile.maxY), CGPoint(x: tile.minX, y: tile.maxY)]
+            let patch = SKSpriteNode(texture: cut(corners, from: wallpaper, outlined: false), size: tile.size)
+            patch.anchorPoint = .zero
+            patch.position = tile.origin
+            patchLayer.addChild(patch)
+
+            let icon = SKSpriteNode(texture: iconTexture(tile), size: tile.size)
+            icon.position = CGPoint(x: tile.midX, y: tile.midY)
+            let body = SKPhysicsBody(rectangleOf: CGSize(width: tile.width * 0.8, height: tile.height * 0.9))
+            body.categoryBitMask = Category.debris
+            body.restitution = 0.2
+            body.friction = 0.6
+            body.density = 1.5
+            icon.physicsBody = body
+            iconLayer.addChild(icon)
+            let away = CGVector(dx: tile.midX - impact.x, dy: tile.midY - impact.y)
+            let length = max(hypot(away.dx, away.dy), 1)
+            body.velocity = CGVector(dx: away.dx / length * 120, dy: away.dy / length * 120 + 140)
+            body.angularVelocity = .random(in: -3...3)
+            iconsDropped += 1
+        }
+    }
+
+    /// The icon and its label without the desktop around them: only pixels that differ from the bare
+    /// wallpaper are kept.
+    private func iconTexture(_ tile: CGRect) -> SKTexture {
+        let scale = CGFloat(snapshot.width) / size.width
+        let width = Int(ceil(tile.width * scale)), height = Int(ceil(tile.height * scale))
+        func pixels(of image: CGImage) -> [UInt8] {
+            var buffer = [UInt8](repeating: 0, count: width * height * 4)
+            let context = CGContext(data: &buffer, width: width, height: height, bitsPerComponent: 8,
+                                    bytesPerRow: width * 4, space: snapshot.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.scaleBy(x: scale, y: scale)
+            context.translateBy(x: -tile.minX, y: -tile.minY)
+            context.draw(image, in: CGRect(origin: .zero, size: size))
+            return buffer
+        }
+        var icon = pixels(of: snapshot)
+        let bare = pixels(of: wallpaper)
+        for i in stride(from: 0, to: icon.count, by: 4) {
+            let diff = max(abs(Int(icon[i]) - Int(bare[i])), abs(Int(icon[i + 1]) - Int(bare[i + 1])),
+                           abs(Int(icon[i + 2]) - Int(bare[i + 2])))
+            // Soft threshold, so label shadows and antialiased edges fade out instead of cutting off hard.
+            let alpha = max(0, min(255, (diff - 10) * 8))
+            for c in 0..<3 { icon[i + c] = UInt8(Int(icon[i + c]) * alpha / 255) }
+            icon[i + 3] = UInt8(alpha)
+        }
+        let data = Data(icon)
+        return SKTexture(data: data, size: CGSize(width: width, height: height), flipped: true)
+    }
+
+    // MARK: - Tidy-up
+
+    /// A broom pushes all the debris off the screen, then the desktop fades to bare wallpaper.
+    func sweep() {
+        guard broom == nil, !isClean else { return }
+        stopFiring()
+        SoundFX.shared.play(.sweep)
+
+        // Floor runs on past the right edge, with no wall there, so the debris can be pushed out.
+        let floor = CGMutablePath()
+        floor.move(to: CGPoint(x: 0, y: size.height * 3))
+        floor.addLine(to: .zero)
+        floor.addLine(to: CGPoint(x: size.width + 2000, y: 0))
+        physicsBody = SKPhysicsBody(edgeChainFrom: floor)
+        physicsBody?.categoryBitMask = Category.edge
+
+        let broom = SKSpriteNode(texture: DeskScene.broomTexture, size: DeskScene.broomSize)
+        broom.anchorPoint = CGPoint(x: 0.5, y: 0)
+        broom.position = CGPoint(x: -DeskScene.broomSize.width, y: 0)
+        broom.zPosition = 5
+        let head = SKPhysicsBody(rectangleOf: CGSize(width: 70, height: 150), center: CGPoint(x: 10, y: 75))
+        head.categoryBitMask = Category.broom
+        head.collisionBitMask = Category.debris
+        head.affectedByGravity = false
+        head.allowsRotation = false
+        head.mass = 10_000
+        broom.physicsBody = head
+        world.addChild(broom)
+        self.broom = broom
+
+        let clean = SKSpriteNode(texture: DeskScene.texture(from: wallpaper), size: size)
+        clean.anchorPoint = .zero
+        clean.zPosition = 50
+        clean.alpha = 0
+        addChild(clean)
+        run(.sequence([
+            .wait(forDuration: 1.5),
+            .run { [weak self] in
+                self?.shardLayer.run(.fadeOut(withDuration: 0.4))
+                self?.iconLayer.run(.fadeOut(withDuration: 0.4))
+            },
+            .run { clean.run(.fadeIn(withDuration: 0.9)) },
+            .wait(forDuration: 0.9),
+            .run { [weak self] in
+                guard let self else { return }
+                self.world.removeFromParent()
+                self.theVoid.removeFromParent()
+                self.broom = nil
+                self.isClean = true
+            },
+            .wait(forDuration: 1),
+            .run { [weak self] in self?.showCleanHint() },
+        ]))
+    }
+
+    /// Without it, the spotless screen looks like the app broke the desktop rather than a joke about it.
+    private func showCleanHint() {
+        let headline = SKLabelNode(text: "Ahh. Much better.")
+        headline.fontName = "HelveticaNeue-Bold"
+        headline.fontSize = 30
+        headline.position = CGPoint(x: 0, y: 6)
+        let line = SKLabelNode(text: "Enjoy the view. Press Esc whenever you miss your stuff.")
+        line.fontName = "HelveticaNeue"
+        line.fontSize = 17
+        line.position = CGPoint(x: 0, y: -24)
+        let width = max(headline.frame.width, line.frame.width) + 64
+        let plate = SKShapeNode(rectOf: CGSize(width: width, height: 96), cornerRadius: 22)
+        plate.fillColor = NSColor(white: 0, alpha: 0.45)
+        plate.strokeColor = NSColor(white: 1, alpha: 0.15)
+        for label in [headline, line] {
+            label.fontColor = .white
+            plate.addChild(label)
+        }
+        plate.position = CGPoint(x: size.width / 2, y: size.height * 0.18)
+        plate.zPosition = 60
+        plate.alpha = 0
+        addChild(plate)
+        plate.run(.fadeIn(withDuration: 0.8))
+    }
+
+    private enum Category {
+        static let edge: UInt32 = 1
+        static let debris: UInt32 = 2
+        static let broom: UInt32 = 4
+    }
+
+    private static let broomSize = CGSize(width: 150, height: 300)
+
+    /// A push broom leaning back against the direction it sweeps.
+    private static let broomTexture: SKTexture = {
+        let scale: CGFloat = 2
+        let w = broomSize.width, h = broomSize.height
+        let context = CGContext(data: nil, width: Int(w * scale), height: Int(h * scale), bitsPerComponent: 8,
+                                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.scaleBy(x: scale, y: scale)
+        context.setLineCap(.round)
+        context.setStrokeColor(CGColor(red: 0.45, green: 0.28, blue: 0.14, alpha: 1))
+        context.setLineWidth(9)
+        context.move(to: CGPoint(x: w / 2 + 6, y: 60))
+        context.addLine(to: CGPoint(x: 14, y: h - 8))
+        context.strokePath()
+        context.setStrokeColor(CGColor(red: 0.62, green: 0.42, blue: 0.22, alpha: 1))
+        context.setLineWidth(3)
+        context.move(to: CGPoint(x: w / 2 + 4, y: 62))
+        context.addLine(to: CGPoint(x: 13, y: h - 10))
+        context.strokePath()
+
+        var rng = SeededRandom(seed: 77)
+        context.setLineWidth(1.6)
+        for i in 0..<70 {
+            let x = w / 2 - 34 + CGFloat(i)
+            let bristle = rng.range(0.78...0.95)
+            context.setStrokeColor(CGColor(red: 0.85 * bristle, green: 0.68 * bristle, blue: 0.3 * bristle, alpha: 1))
+            context.move(to: CGPoint(x: x + 2, y: 52))
+            context.addLine(to: CGPoint(x: x + rng.range(-4...4), y: rng.range(0...4)))
+            context.strokePath()
+        }
+        context.setFillColor(CGColor(red: 0.28, green: 0.17, blue: 0.09, alpha: 1))
+        let block = CGRect(x: w / 2 - 38, y: 48, width: 84, height: 18)
+        context.addPath(CGPath(roundedRect: block, cornerWidth: 4, cornerHeight: 4, transform: nil))
+        context.fillPath()
+        return SKTexture(cgImage: context.makeImage()!)
+    }()
 
     // MARK: - Juice
 
@@ -461,6 +672,10 @@ final class DeskScene: SKScene {
     func resetFrameStats() { worstFPS = .infinity; windowStart = 0 }
 
     override func update(_ currentTime: TimeInterval) {
+        if let broom, let body = broom.physicsBody {
+            body.velocity = CGVector(dx: (size.width + 2 * DeskScene.broomSize.width) / 1.4, dy: 0)
+            broom.position.y = 0
+        }
         let dt = lastUpdate == 0 ? 0 : min(currentTime - lastUpdate, 0.1)
         lastUpdate = currentTime
         gaze = gaze.moved(toward: gazeTarget, by: 0.06)

@@ -6,6 +6,8 @@ struct ScreenShot {
     let image: CGImage
     /// False when screen capture was unavailable and the wallpaper stands in for the screen.
     let isLive: Bool
+    /// The desktop picture alone, without icons or windows.
+    let wallpaper: CGImage
 }
 
 enum Snapshot {
@@ -25,7 +27,8 @@ enum Snapshot {
         for screen in screens {
             if let display = content.displays.first(where: { $0.displayID == displayID(of: screen) }),
                let image = try? await capture(display) {
-                shots.append(ScreenShot(screen: screen, image: image, isLive: true))
+                let wallpaper = await captureWallpaper(of: display, in: content) ?? standIn(for: screen).image
+                shots.append(ScreenShot(screen: screen, image: image, isLive: true, wallpaper: wallpaper))
             } else {
                 shots.append(standIn(for: screen))
             }
@@ -34,7 +37,31 @@ enum Snapshot {
     }
 
     static func capture(_ display: SCDisplay) async throws -> CGImage {
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        try await capture(SCContentFilter(display: display, excludingWindows: []))
+    }
+
+    /// The Dock draws each display's desktop picture in its own window; capturing only that window gives the
+    /// wallpaper as the user actually sees it, which the API for the wallpaper's file doesn't always report.
+    private static func captureWallpaper(of display: SCDisplay, in content: SCShareableContent) async -> CGImage? {
+        guard let window = content.windows.first(where: {
+            $0.owningApplication?.bundleIdentifier == "com.apple.dock" && ($0.title ?? "").hasPrefix("Wallpaper-")
+                && display.frame.contains(CGPoint(x: $0.frame.midX, y: $0.frame.midY))
+        }) else { return nil }
+        return try? await capture(SCContentFilter(display: display, including: [window]))
+    }
+
+    /// Frames of ordinary app windows on screen, in global AppKit coordinates.
+    static func windowFrames() async -> [CGRect] {
+        guard CGPreflightScreenCaptureAccess(),
+              let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        else { return [] }
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        return content.windows.filter { $0.windowLayer == 0 && $0.isOnScreen }.map {
+            CGRect(x: $0.frame.minX, y: mainHeight - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
+        }
+    }
+
+    private static func capture(_ filter: SCContentFilter) async throws -> CGImage {
         let config = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)
         config.width = Int(filter.contentRect.width * scale)
@@ -61,6 +88,7 @@ enum Snapshot {
                                                y: (CGFloat(height) - size.height) / 2,
                                                width: size.width, height: size.height))
         }
-        return ScreenShot(screen: screen, image: context.makeImage()!, isLive: false)
+        let image = context.makeImage()!
+        return ScreenShot(screen: screen, image: image, isLive: false, wallpaper: image)
     }
 }

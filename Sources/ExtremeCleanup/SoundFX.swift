@@ -2,7 +2,7 @@ import AVFoundation
 
 /// Procedurally synthesised effects, so the app ships no audio files.
 final class SoundFX {
-    enum Effect { case thud, crack, shatter, shot }
+    enum Effect { case thud, crack, shatter, shot, sweep }
 
     static let shared = SoundFX()
 
@@ -25,6 +25,11 @@ final class SoundFX {
         }
         buffers[.shot] = synth(seconds: 0.12) { t, noise in
             noise * exp(-t * 45) * 0.7 + sin(2 * .pi * 95 * t) * exp(-t * 35) * 0.6
+        }
+        var smooth: Float = 0
+        buffers[.sweep] = synth(seconds: 1.6) { t, noise in
+            smooth += (noise - smooth) * 0.08  // low-passed: a broad brushing hiss
+            return smooth * sin(.pi * t / 1.6) * 2.2
         }
         var last: Float = 0
         buffers[.crack] = synth(seconds: 0.15) { t, noise in

@@ -15,6 +15,7 @@ Esc and your real desktop is exactly as you left it.
 | 1 / 2 | Pick a tool: hammer / minigun |
 | Click | Hammer: one hit cracks, two widen the crack, three shatter the glass |
 | Hold | Minigun: every round leaves a bullet hole; seven in one spot shatter it |
+| C | Clean up: a broom sweeps the mess away and leaves a spotless desktop |
 | Esc / ⌘Q | Quit — back to your untouched desktop |
 | D | Debug overlay (frame rate, detected icons) |
 

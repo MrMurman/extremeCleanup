@@ -144,6 +144,42 @@ enum Demo {
         try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
     }
 
+    static func sweep(scene: DeskScene, screen: NSScreen, iconsBefore: [DesktopIcon], into dir: URL) async {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var report = "visible icons on this display: \(scene.iconCentres.count)\n"
+        try? await Task.sleep(for: .seconds(1))
+
+        // Shatter the glass under a few icons, plus some open wallpaper.
+        let w = scene.size.width, h = scene.size.height
+        let targets = Array(scene.iconCentres.prefix(4)) + [CGPoint(x: w * 0.45, y: h * 0.5), CGPoint(x: w * 0.6, y: h * 0.4)]
+        for point in targets {
+            for _ in 0..<3 {
+                scene.hammer(at: point)
+                try? await Task.sleep(for: .seconds(0.12))
+            }
+        }
+        try? await Task.sleep(for: .seconds(2))
+        report += "icons dropped: \(scene.iconsDropped)\n"
+        await capture(screen, to: dir.appendingPathComponent("1-wrecked.png"))
+
+        let start = Date()
+        scene.sweep()
+        try? await Task.sleep(for: .seconds(0.8))
+        await capture(screen, to: dir.appendingPathComponent("2-sweeping.png"))
+        while !scene.isClean && Date().timeIntervalSince(start) < 10 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        report += String(format: "sweep → clean desktop: %.2f s (clean: %@)\n", Date().timeIntervalSince(start),
+                         scene.isClean ? "yes" : "no")
+        try? await Task.sleep(for: .seconds(2))
+        await capture(screen, to: dir.appendingPathComponent("3-clean.png"))
+
+        let after = DesktopIcons.read()
+        report += "Finder icons before/after: \(iconsBefore.count)/\(after.count), unchanged: "
+            + (after == iconsBefore ? "yes" : "NO") + "\n"
+        try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
+    }
+
     private static func snapshot(_ screen: NSScreen) async -> CGImage? {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
               let display = content.displays.first(where: { $0.displayID == Snapshot.displayID(of: screen) })

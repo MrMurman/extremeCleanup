@@ -13,11 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `--self-check <dir>`: re-capture the screen with the overlay up, write a pixel diff report, quit.
     private let selfCheckDir = AppDelegate.directory(after: "--self-check")
-    /// `--demo-hammer <dir>` / `--demo-minigun <dir>` / `--demo-void <dir>`: scripted run on the main
-    /// display, with captures and a report.
+    /// `--demo-hammer|minigun|void|sweep <dir>`: scripted run on the main display, with captures and a report.
     private let hammerDemoDir = AppDelegate.directory(after: "--demo-hammer")
     private let minigunDemoDir = AppDelegate.directory(after: "--demo-minigun")
     private let voidDemoDir = AppDelegate.directory(after: "--demo-void")
+    private let sweepDemoDir = AppDelegate.directory(after: "--demo-sweep")
 
     private static func directory(after flag: String) -> URL? {
         let args = CommandLine.arguments
@@ -29,7 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             let shots = await Snapshot.captureAll()
             let icons = DesktopIcons.read()
-            show(shots, icons: icons)
+            let windows = await Snapshot.windowFrames()
+            show(shots, icons: DesktopIcons.uncovered(icons, by: windows))
             installKeys()
             if let dir = selfCheckDir {
                 try? await Task.sleep(for: .seconds(1))
@@ -44,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let dir = minigunDemoDir {
                     select(.minigun)
                     await Demo.minigun(scene: scene, screen: shot.screen, into: dir)
+                    NSApp.terminate(nil)
+                }
+                if let dir = sweepDemoDir {
+                    await Demo.sweep(scene: scene, screen: shot.screen, iconsBefore: icons, into: dir)
                     NSApp.terminate(nil)
                 }
                 if let dir = voidDemoDir {
@@ -91,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case 53: NSApp.terminate(nil)  // Esc
             case 12 where event.modifierFlags.contains(.command): NSApp.terminate(nil)  // ⌘Q
             case 2: self?.scenes.forEach { $0.toggleDebug() }  // D
+            case 8: self?.scenes.forEach { $0.sweep() }  // C
             case 18: self?.select(.hammer)  // 1
             case 19: self?.select(.minigun)  // 2
             default: return event

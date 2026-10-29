@@ -1,9 +1,14 @@
 import AppKit
 
-struct DesktopIcon: Codable {
+struct DesktopIcon: Codable, Equatable {
     let name: String
     /// Global AppKit coordinates (origin at the bottom-left of the main screen).
     let frame: CGRect
+
+    /// The icon with its name label underneath.
+    var tile: CGRect {
+        CGRect(x: frame.minX - 14, y: frame.minY - 34, width: frame.width + 28, height: frame.height + 34)
+    }
 }
 
 enum DesktopIcons {
@@ -22,6 +27,11 @@ enum DesktopIcons {
     """
 
     private(set) static var lastError: String?
+
+    /// Icons no window covers, even partly: only those can be seen, so only those can fall.
+    static func uncovered(_ icons: [DesktopIcon], by windows: [CGRect]) -> [DesktopIcon] {
+        icons.filter { icon in !windows.contains { $0.intersects(icon.tile) } }
+    }
 
     /// Reads icon positions from Finder. Empty if Automation access is denied or Finder doesn't answer.
     static func read() -> [DesktopIcon] {
