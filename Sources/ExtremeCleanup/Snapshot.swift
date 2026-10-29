@@ -15,18 +15,24 @@ enum Snapshot {
         (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 
-    static func captureAll() async -> [ScreenShot] {
-        let screens = NSScreen.screens
+    /// How many displays have been snapshotted since launch.
+    private(set) static var captures = 0
+
+    /// Snapshots the given displays. The app's own windows are left out, so the launcher can never end up in the glass.
+    static func captureAll(_ screens: [NSScreen]) async -> [ScreenShot] {
+        captures += screens.count
         guard CGPreflightScreenCaptureAccess(),
               let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         else {
             CGRequestScreenCaptureAccess()
             return screens.map(standIn)
         }
+        let ownApp = content.applications.filter { $0.processID == getpid() }
         var shots: [ScreenShot] = []
         for screen in screens {
             if let display = content.displays.first(where: { $0.displayID == displayID(of: screen) }),
-               let image = try? await capture(display) {
+               let image = try? await capture(SCContentFilter(display: display, excludingApplications: ownApp,
+                                                              exceptingWindows: [])) {
                 let wallpaper = await captureWallpaper(of: display, in: content) ?? standIn(for: screen).image
                 shots.append(ScreenShot(screen: screen, image: image, isLive: true, wallpaper: wallpaper))
             } else {
@@ -56,7 +62,9 @@ enum Snapshot {
               let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         else { return [] }
         let mainHeight = NSScreen.screens.first?.frame.height ?? 0
-        return content.windows.filter { $0.windowLayer == 0 && $0.isOnScreen }.map {
+        return content.windows.filter {
+            $0.windowLayer == 0 && $0.isOnScreen && $0.owningApplication?.processID != getpid()
+        }.map {
             CGRect(x: $0.frame.minX, y: mainHeight - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
         }
     }

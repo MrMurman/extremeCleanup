@@ -242,6 +242,144 @@ enum Demo {
         try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
     }
 
+    static func launcher(app: AppDelegate, into dir: URL) async {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var report = ""
+        func check(_ name: String, _ ok: Bool) { report += (ok ? "PASS " : "FAIL ") + name + "\n" }
+        let launcher = app.launcher
+        try? await Task.sleep(for: .seconds(1))
+        check("launcher is up on launch", launcher.isVisible)
+        check("nothing captured before Start", Snapshot.captures == 0 && !app.isPlaying)
+
+        let home = launcher.screen
+        let homeID = Snapshot.displayID(of: home)
+        let others = NSScreen.screens.filter { $0 != home }
+        // Only the launcher's own window, never the rest of the screen.
+        if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
+           let window = content.windows.first(where: { Int($0.windowID) == launcher.windowNumber }),
+           let image = try? await SCScreenshotManager.captureImage(
+               contentFilter: SCContentFilter(desktopIndependentWindow: window),
+               configuration: { let c = SCStreamConfiguration(); c.width = Int(window.frame.width * 2)
+                                c.height = Int(window.frame.height * 2); return c }()) {
+            write(image, to: dir.appendingPathComponent("launcher.png"))
+        }
+        let withLauncher = await snapshot(home)
+        let launcherRect = launcher.frame.offsetBy(dx: -home.frame.minX, dy: -home.frame.minY)
+
+        func waitForPlay() async {
+            for _ in 0..<100 where !app.isPlaying { try? await Task.sleep(for: .milliseconds(50)) }
+            try? await Task.sleep(for: .seconds(0.8))
+        }
+        func launcherAbsent() -> Bool {
+            guard let before = withLauncher, let shot = app.shots.first else { return false }
+            return meanDifference(before, shot.image, in: launcherRect, size: home.frame.size) > 12
+        }
+
+        // First go: this display only, sound off, minigun.
+        launcher.choose(LaunchSettings(displays: [homeID], controls: homeID, sound: false, tool: .minigun))
+        launcher.start()
+        await waitForPlay()
+        guard let scene = app.scenes.first else {
+            check("Start begins play", false)
+            try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
+            return
+        }
+        check("launcher hidden during play", !launcher.isVisible)
+        check("only the checked display is covered", app.windows.map(\.frame) == [home.frame])
+        check("toolbelt on the controls display", scene.beltVisible)
+        check("starting tool honoured (minigun)", scene.tool == .minigun)
+        check("launcher absent from the snapshot", launcherAbsent())
+        var played = SoundFX.shared.played
+        scene.hammer(at: CGPoint(x: launcherRect.midX, y: launcherRect.midY))
+        scene.hammer(at: CGPoint(x: launcherRect.midX, y: launcherRect.midY))
+        scene.hammer(at: CGPoint(x: launcherRect.midX, y: launcherRect.midY))
+        try? await Task.sleep(for: .seconds(1.2))
+        check("sound off is silent", SoundFX.shared.played == played)
+        check("shards cut from the launcher's spot", scene.shatters > 0)
+
+        app.backToLauncher()
+        try? await Task.sleep(for: .seconds(0.5))
+        check("Esc brings the launcher back", launcher.isVisible && app.windows.isEmpty && !app.isPlaying)
+
+        // Second go: sound on, hammer, a fresh snapshot.
+        let capturesBefore = Snapshot.captures
+        launcher.choose(LaunchSettings(displays: [homeID], controls: homeID, sound: true, tool: .hammer))
+        launcher.start()
+        await waitForPlay()
+        check("second Start takes a fresh snapshot", Snapshot.captures > capturesBefore && app.isPlaying)
+        if let again = app.scenes.first {
+            check("starting tool honoured (hammer)", again.tool == .hammer)
+            check("launcher absent from the second snapshot", launcherAbsent())
+            played = SoundFX.shared.played
+            again.hammer(at: CGPoint(x: again.size.width * 0.3, y: again.size.height * 0.5))
+            try? await Task.sleep(for: .seconds(0.3))
+            check("sound on plays", SoundFX.shared.played > played)
+        }
+        app.backToLauncher()
+        try? await Task.sleep(for: .seconds(0.5))
+
+        // Third go, given a second display: play there only, with the toolbelt there too.
+        if let other = others.first {
+            let otherID = Snapshot.displayID(of: other)
+            launcher.choose(LaunchSettings(displays: [otherID], controls: otherID, sound: true, tool: .hammer))
+            launcher.start()
+            await waitForPlay()
+            check("other display only: this one stays uncovered", app.windows.map(\.frame) == [other.frame])
+            check("toolbelt follows to the other display", app.scenes.first?.beltVisible ?? false)
+            app.backToLauncher()
+            try? await Task.sleep(for: .seconds(0.5))
+            // Both displays, controls on the other one: only that one gets the belt.
+            launcher.choose(LaunchSettings(displays: [homeID, otherID], controls: otherID, sound: false, tool: .minigun))
+            launcher.start()
+            await waitForPlay()
+            let belts = zip(app.shots, app.scenes).map { (Snapshot.displayID(of: $0.screen), $1.beltVisible) }
+            check("both displays covered", app.windows.count == 2)
+            check("toolbelt only on the chosen display", belts.allSatisfy { $0.1 == ($0.0 == otherID) })
+            app.backToLauncher()
+            try? await Task.sleep(for: .seconds(0.5))
+        } else {
+            report += "SKIP second-display checks: one display connected\n"
+        }
+
+        check("About credits the original as a tribute", Launcher.about.joined().contains("tribute to the original"))
+        check("About links to the archive page", Launcher.archiveURL.host == "gamia-archive.fandom.com")
+        let saved = LaunchSettings.load(from: app.defaults, home: home)
+        check("choices saved", saved == launcher.settings)
+        try? "\(launcher.settings)".write(to: dir.appendingPathComponent("expected.txt"), atomically: true, encoding: .utf8)
+        try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
+    }
+
+    /// Run on a fresh launch after `launcher(app:into:)`: the launcher should come up with the choices it left.
+    static func recall(launcher: Launcher, into dir: URL) async {
+        try? await Task.sleep(for: .seconds(0.5))
+        let expected = (try? String(contentsOf: dir.appendingPathComponent("expected.txt"), encoding: .utf8)) ?? "?"
+        let ok = "\(launcher.settings)" == expected && launcher.isVisible
+        let line = (ok ? "PASS" : "FAIL") + " choices survive a relaunch (\(launcher.settings))\n"
+        try? line.write(to: dir.appendingPathComponent("recall.txt"), atomically: true, encoding: .utf8)
+    }
+
+    /// Mean per-channel difference (0–255) between two captures of the same display, over a rect in points.
+    private static func meanDifference(_ a: CGImage, _ b: CGImage, in rect: CGRect, size: CGSize) -> Double {
+        func pixels(_ image: CGImage) -> [UInt8] {
+            let scale = CGFloat(image.width) / size.width
+            let box = CGRect(x: rect.minX * scale, y: (size.height - rect.maxY) * scale,
+                             width: rect.width * scale, height: rect.height * scale).integral
+            let w = 200, h = 200
+            var out = [UInt8](repeating: 0, count: w * h * 4)
+            guard let crop = image.cropping(to: box),
+                  let context = CGContext(data: &out, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return out }
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return out
+        }
+        let pa = pixels(a), pb = pixels(b)
+        var total = 0
+        for i in 0..<pa.count where i % 4 != 3 { total += abs(Int(pa[i]) - Int(pb[i])) }
+        return Double(total) / Double(pa.count / 4 * 3)
+    }
+
     private static func snapshot(_ screen: NSScreen) async -> CGImage? {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
               let display = content.displays.first(where: { $0.displayID == Snapshot.displayID(of: screen) })

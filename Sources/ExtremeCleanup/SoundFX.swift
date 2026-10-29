@@ -50,13 +50,18 @@ final class SoundFX {
         try? engine.start()
     }
 
+    var isEnabled = true
+    /// Effects actually played since launch.
+    private(set) var played = 0
+
     func play(_ effect: Effect, volume: Float = 1) {
-        guard engine.isRunning, let buffer = buffers[effect] else { return }
+        guard isEnabled, engine.isRunning, let buffer = buffers[effect] else { return }
         let player = players[nextPlayer]
         nextPlayer = (nextPlayer + 1) % players.count
         player.volume = volume
         player.scheduleBuffer(buffer, at: nil, options: .interrupts)
         player.play()
+        played += 1
     }
 
     private func synth(seconds: Float, _ sample: (Float, Float) -> Float) -> AVAudioPCMBuffer {

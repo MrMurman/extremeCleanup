@@ -10,13 +10,17 @@ Esc and your real desktop is exactly as you left it.
 
 ## Controls
 
+The app opens with a small launcher: pick which displays to play on, which one shows the toolbelt, sound, and the
+starting tool, then press **Start the cleanup**. Your choices are remembered.
+
 | Key / mouse | Action |
 |---|---|
 | 1 / 2 | Pick a tool: hammer / minigun |
 | Click | Hammer: one hit cracks, two widen the crack, three shatter the glass |
 | Hold | Minigun: every round leaves a bullet hole; seven in one spot shatter it |
 | C | Clean up: a broom sweeps the mess away and leaves a spotless desktop |
-| Esc / ⌘Q | Quit — back to your untouched desktop |
+| Esc | Back to the launcher — your real desktop is untouched |
+| ⌘Q | Quit |
 | D | Debug overlay (frame rate, detected icons) |
 
 ## Permissions
