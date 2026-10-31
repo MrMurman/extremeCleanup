@@ -1,5 +1,7 @@
 # Extreme Cleanup
 
+![Extreme Cleanup](docs/banner.jpg)
+
 A desktop toy for macOS: take a hammer or a minigun to your screen, watch the glass crack, shatter and pile up at the
 bottom. Built from scratch with AI as an homage to the 2000s classic *Desktop Destroyer*.
 
