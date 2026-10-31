@@ -19,6 +19,10 @@ Requires macOS 14 or later, on Apple silicon or Intel.
 >
 > **Prefer not to run unverified software?** A web version you can try in the browser is on the way.
 
+**Scanned:** the 1.0.0 download has a [VirusTotal report](https://www.virustotal.com/gui/file/f109eed9f22053a66fc0bff9c3e94a70aef7192090832e507dc697b5595d9080).
+Its SHA-256 is `f109eed9f22053a66fc0bff9c3e94a70aef7192090832e507dc697b5595d9080`; to check that your copy is the
+same file, run `shasum -a 256 ExtremeCleanup-1.0.0.zip` in Terminal.
+
 1. Download **ExtremeCleanup-<version>.zip** from [Releases](../../releases/latest) **in your browser**, unzip it
    and move **Extreme Cleanup** to Applications.
 2. Open it. macOS stops it the first time:
