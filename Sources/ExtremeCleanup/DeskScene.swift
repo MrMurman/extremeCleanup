@@ -14,6 +14,10 @@ final class DeskScene: SKScene {
     private var toolbelt: Toolbelt?
     private let pointer = ToolCursor()
     private var pointerRefresh = 0
+    /// While set, the tool stands here instead of on the mouse, and the mouse is ignored: a directed take.
+    var scriptedPointer: CGPoint? {
+        didSet { if let scriptedPointer { lookToward(scriptedPointer) } }
+    }
 
     private let world = SKNode()
     /// The snapshot and its cracks, masked so that holes show what lies behind.
@@ -144,6 +148,7 @@ final class DeskScene: SKScene {
     // MARK: - Input
 
     override func mouseMoved(with event: NSEvent) {
+        guard scriptedPointer == nil else { return }
         lookToward(event.location(in: self))
     }
 
@@ -166,6 +171,7 @@ final class DeskScene: SKScene {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard scriptedPointer == nil else { return }
         press(at: event.location(in: self))
     }
 
@@ -181,11 +187,13 @@ final class DeskScene: SKScene {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard scriptedPointer == nil else { return }
         lookToward(event.location(in: self))
         if trigger != nil { aim(at: event.location(in: self)) }
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard scriptedPointer == nil else { return }
         stopFiring()
     }
 
@@ -738,6 +746,13 @@ final class DeskScene: SKScene {
     /// Keeps the tool on the mouse on this display, and the system arrow wherever no overlay is under it.
     private func trackPointer() {
         guard let window = view?.window else { return }
+        if let scriptedPointer {
+            pointer.isHidden = false
+            pointer.position = scriptedPointer
+            pointerRefresh = (pointerRefresh + 1) % 15
+            if NSApp.isActive && (NSCursor.current != ToolCursor.blank || pointerRefresh == 0) { ToolCursor.blank.set() }
+            return
+        }
         let mouse = NSEvent.mouseLocation
         let inside = window.frame.contains(mouse)
         // Only the active app can hide the system pointer; while another app is active the tool steps aside rather

@@ -46,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// checks on a later launch that the choices came back.
     private let launcherDemoDir = AppDelegate.directory(after: "--demo-launcher")
     private let recallDemoDir = AppDelegate.directory(after: "--demo-recall")
+    /// `--direct <choreography.json>`: play a scripted take on the main display; Space starts it, Esc quits.
+    private let choreography = AppDelegate.directory(after: "--direct")
+    private var director: Director?
 
     private static func argument(after flag: String) -> String? {
         let args = CommandLine.arguments
@@ -66,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         installKeys()
         Music.shared.prepare()
+        if let choreography {
+            Task { await direct(choreography) }
+            return
+        }
         let scripted = [selfCheckDir, hammerDemoDir, minigunDemoDir, voidDemoDir, sweepDemoDir, beltDemoDir, cursorDemoDir]
         guard scripted.allSatisfy({ $0 == nil }) else {
             Task { await runScripted() }
@@ -110,6 +117,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         NSApp.terminate(nil)
+    }
+
+    /// Straight into play on the main display with the choreography's sound and music, then the take.
+    private func direct(_ file: URL) async {
+        do {
+            let choreography = try Choreography.load(file)
+            let main = Snapshot.displayID(of: NSScreen.screens[0])
+            await play(LaunchSettings(displays: [main], controls: main, sound: choreography.sound,
+                                      music: choreography.music))
+            guard let scene = scenes.first, let shot = shots.first else { return NSApp.terminate(nil) }
+            let director = try Director(choreography, from: file, scene: scene, screen: shot.screen,
+                                        icons: DesktopIcons.read(), select: { [weak self] in self?.select($0) })
+            self.director = director
+            print("Ready: press Space to start the take, Esc to quit.")
+            let log = try await director.run()
+            print("Take done. Log: \(log.path)")
+        } catch {
+            FileHandle.standardError.write(Data("--direct: \(error)\n".utf8))
+            NSApp.terminate(nil)
+        }
     }
 
     var isPlaying: Bool { !scenes.isEmpty }
@@ -200,6 +227,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return nil
                 }
                 return event
+            }
+            if let director {
+                switch event.keyCode {
+                case 49: director.start()  // Space
+                case 53: NSApp.terminate(nil)  // Esc
+                default: return event
+                }
+                return nil
             }
             switch event.keyCode {
             case 53: backToLauncher()  // Esc
