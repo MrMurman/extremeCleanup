@@ -6,6 +6,7 @@ import SpriteKit
 final class ToolCursor: SKNode {
     private static let art: [DeskScene.Tool: ToolModels.CursorArt] = [
         .hammer: ToolModels.cursor(.hammer), .minigun: ToolModels.cursor(.minigun),
+        .leafBlower: ToolModels.cursor(.leafBlower),
     ]
     /// AppKit's own pointer is hidden while the tool stands in for it.
     static let blank = NSCursor(image: NSImage(size: CGSize(width: 1, height: 1)), hotSpot: .zero)
@@ -77,6 +78,21 @@ final class ToolCursor: SKNode {
             sprite.run(.repeatForever(.animate(with: frames, timePerFrame: 1.0 / 40)), withKey: "spin")
         } else {
             sprite.removeAction(forKey: "spin")
+        }
+    }
+
+    /// A small running vibration while the blower is held, so the nozzle reads as "on".
+    func blow(_ on: Bool) {
+        if on {
+            guard sprite.action(forKey: "blow") == nil else { return }
+            let j: CGFloat = 1.6
+            let shake = SKAction.sequence([.moveBy(x: j, y: j, duration: 0.03),
+                                           .moveBy(x: -2 * j, y: -2 * j, duration: 0.06),
+                                           .moveBy(x: j, y: j, duration: 0.03)])
+            sprite.run(.repeatForever(shake), withKey: "blow")
+        } else {
+            sprite.removeAction(forKey: "blow")
+            sprite.position = .zero
         }
     }
 }

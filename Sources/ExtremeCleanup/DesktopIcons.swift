@@ -9,6 +9,11 @@ struct DesktopIcon: Codable, Equatable {
     var tile: CGRect {
         CGRect(x: frame.minX - 14, y: frame.minY - 34, width: frame.width + 28, height: frame.height + 34)
     }
+
+    /// The icon image inside a tile made by `tile`.
+    static func image(inTile tile: CGRect) -> CGRect {
+        CGRect(x: tile.minX + 14, y: tile.minY + 34, width: tile.width - 28, height: tile.height - 34)
+    }
 }
 
 enum DesktopIcons {

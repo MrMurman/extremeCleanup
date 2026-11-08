@@ -6,9 +6,10 @@ struct LaunchSettings: Equatable, CustomStringConvertible {
     var controls: CGDirectDisplayID
     var sound: Bool
     var music: Bool
+    var style: AutumnStyle = .retro
 
     var description: String {
-        "displays=\(displays) controls=\(controls) sound=\(sound) music=\(music)"
+        "displays=\(displays) controls=\(controls) sound=\(sound) music=\(music) style=\(style.rawValue)"
     }
 
     static func load(from defaults: UserDefaults, home: NSScreen) -> LaunchSettings {
@@ -16,7 +17,8 @@ struct LaunchSettings: Equatable, CustomStringConvertible {
         let settings = LaunchSettings(
             displays: saved, controls: CGDirectDisplayID(defaults.integer(forKey: "controls")),
             sound: defaults.object(forKey: "sound") as? Bool ?? true,
-            music: defaults.object(forKey: "music") as? Bool ?? true)
+            music: defaults.object(forKey: "music") as? Bool ?? true,
+            style: (defaults.string(forKey: "style")).flatMap(AutumnStyle.init) ?? .retro)
         return settings.fitted(home: home)
     }
 
@@ -25,6 +27,7 @@ struct LaunchSettings: Equatable, CustomStringConvertible {
         defaults.set(Int(controls), forKey: "controls")
         defaults.set(sound, forKey: "sound")
         defaults.set(music, forKey: "music")
+        defaults.set(style.rawValue, forKey: "style")
     }
 
     /// Drops displays that are no longer connected; falls back to the launcher's own display.
@@ -60,6 +63,7 @@ final class Launcher {
     private var controlRadios: [(CGDirectDisplayID, RetroToggle)] = []
     private var soundRadios: [RetroToggle] = []
     private var musicRadios: [RetroToggle] = []
+    private var styleRadios: [RetroToggle] = []
 
     var isVisible: Bool { window.isVisible }
     var frame: CGRect { window.frame }
@@ -162,6 +166,17 @@ final class Launcher {
         panel.addSubview(music)
         y += 44 + 6
 
+        let styleGroup = RetroGroup(title: "Leaf style", frame: CGRect(x: pad, y: y, width: inner, height: 44))
+        styleRadios = AutumnStyle.allCases.enumerated().map { i, option in
+            let radio = RetroToggle(kind: .radio, label: option.label,
+                                    frame: CGRect(x: 12 + CGFloat(i) * 110, y: 20, width: 104, height: 18))
+            radio.onChange = { [weak self] _ in self?.settings.style = option; self?.refresh() }
+            styleGroup.addSubview(radio)
+            return radio
+        }
+        panel.addSubview(styleGroup)
+        y += 44 + 6
+
         let keys = Retro.label("In play: 1 / 2 switch tools  ·  C sweeps up  ·  M music  ·  Esc comes back here",
                                size: 10, color: Retro.ink.withAlphaComponent(0.6))
         keys.frame = CGRect(x: pad + 2, y: y, width: inner, height: 14)
@@ -218,6 +233,7 @@ final class Launcher {
         }
         for (i, radio) in soundRadios.enumerated() { radio.isOn = (i == 0) == settings.sound }
         for (i, radio) in musicRadios.enumerated() { radio.isOn = (i == 0) == settings.music }
+        for (i, radio) in styleRadios.enumerated() { radio.isOn = AutumnStyle.allCases[i] == settings.style }
         onChange?(settings)
     }
 }

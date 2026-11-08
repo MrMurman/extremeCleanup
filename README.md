@@ -3,7 +3,9 @@
 ![Extreme Cleanup](docs/banner.jpg)
 
 A desktop toy for macOS: take a hammer or a minigun to your screen, watch the glass crack, shatter and pile up at the
-bottom. Built from scratch with AI as an homage to the 2000s classic *Desktop Destroyer*.
+bottom. Or pick up the leaf blower: autumn branches slide in, leaves fall and settle on your icons and windows, and
+you blow them off the screen. Built from scratch with AI, art included, as an homage to the 2000s classic
+*Desktop Destroyer*.
 
 **It never touches your files.** The app takes a snapshot of your screen and wrecks the picture. Press
 Esc and your real desktop is exactly as you left it.
@@ -47,16 +49,17 @@ xattr -dr com.apple.quarantine /Applications/ExtremeCleanup.app
 
 ## Controls
 
-The app opens with a small launcher: pick which displays to play on, which one shows the toolbelt, sound and music,
-then press **Start the cleanup**. Your choices are remembered.
+The app opens with a small launcher: pick which displays to play on, which one shows the toolbelt, sound, music and
+the leaf style (retro pixel art or realistic), then press **Start the cleanup**. Your choices are remembered.
 
 | Key / mouse | Action |
 |---|---|
-| 1 / 2 | Pick a tool: hammer / minigun |
+| 1 / 2 / 3 | Pick a tool: hammer / minigun / leaf blower |
 | Click | Hammer: one hit cracks, two widen the crack, three shatter the glass |
 | Hold | Minigun: every round leaves a bullet hole; seven in one spot shatter it |
+| Press and drag | Leaf blower: the press sets the nozzle, dragging aims the jet. A gentle jet slides leaves along, a strong one lifts them and blows them off the screen |
 | M | Music on / off |
-| C | Clean up: a broom sweeps the mess away and leaves a spotless desktop |
+| C | Clean up: a broom sweeps the mess away, leaves included, and leaves a spotless desktop |
 | Esc | Back to the launcher — your real desktop is untouched |
 | ⌘Q | Quit |
 | D | Debug overlay (frame rate, detected icons) |
@@ -65,6 +68,8 @@ then press **Start the cleanup**. Your choices are remembered.
 
 - **Screen Recording** — to take the snapshot it smashes. Without it you get your wallpaper instead.
 - **Automation → Finder** — read-only, to find where your desktop icons are.
+- **No permission needed:** the app also reads where your open windows are (position and size only, nothing inside
+  them), so falling leaves can settle on their top edges.
 
 Newer macOS versions now and then ask you to confirm that an app may keep recording the screen. That happens to
 every app that captures the screen; choose *Allow* to keep playing.
@@ -83,8 +88,13 @@ Recording again after every rebuild.
 
 ## Credits
 
-Inspired by *Desktop Destroyer* (freeware, 2000s). No code, art or sound from the original is used:
-everything here is written from scratch, and all sounds and the music are synthesised in code.
+Inspired by *Desktop Destroyer* (freeware, 2000s). No code, art or sound from the original is used.
+
+- **Code:** written from scratch with AI (Claude).
+- **Sound and music:** synthesised in code; the app ships no audio files.
+- **Autumn art:** the leaves and branches were generated with AI (ChatGPT, OpenAI's gpt-image model), together
+  with a browser prototype of the leaf physics that the game's version grew from. `scripts/clean-autumn-art.py`
+  prepares the generated images for the game.
 
 ## License
 

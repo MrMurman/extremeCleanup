@@ -1,0 +1,307 @@
+{
+  "version": 5,
+  "frameOrder": "row-major",
+  "styles": {
+    "realistic": {
+      "leaves": "assets/realistic-leaves.png",
+      "branches": "assets/realistic-branches.png",
+      "atlasSize": [
+        768,
+        512
+      ],
+      "frames": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 256,
+          "h": 256
+        },
+        {
+          "x": 256,
+          "y": 0,
+          "w": 256,
+          "h": 256
+        },
+        {
+          "x": 512,
+          "y": 0,
+          "w": 256,
+          "h": 256
+        },
+        {
+          "x": 0,
+          "y": 256,
+          "w": 256,
+          "h": 256
+        },
+        {
+          "x": 256,
+          "y": 256,
+          "w": 256,
+          "h": 256
+        },
+        {
+          "x": 512,
+          "y": 256,
+          "w": 256,
+          "h": 256
+        }
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "filter": "linear",
+      "branchSize": [
+        1586,
+        992
+      ],
+      "animationFps": null,
+      "notes": "6 independent leaf variants",
+      "pile": "assets/realistic-pile-poses.png",
+      "pileAtlasSize": [
+        768,
+        512
+      ],
+      "pileFrames": [
+        {
+          "x": 10,
+          "y": 78,
+          "w": 238,
+          "h": 115
+        },
+        {
+          "x": 269,
+          "y": 63,
+          "w": 227,
+          "h": 139
+        },
+        {
+          "x": 533,
+          "y": 58,
+          "w": 226,
+          "h": 142
+        },
+        {
+          "x": 11,
+          "y": 354,
+          "w": 238,
+          "h": 60
+        },
+        {
+          "x": 264,
+          "y": 330,
+          "w": 235,
+          "h": 115
+        },
+        {
+          "x": 531,
+          "y": 319,
+          "w": 227,
+          "h": 128
+        }
+      ],
+      "pileFrameOrder": [
+        "low-oblique",
+        "curled-tip",
+        "folded-lobes",
+        "edge-on",
+        "v-fold",
+        "underside"
+      ]
+    },
+    "retro": {
+      "leaves": "assets/retro-leaf-turn.png",
+      "branches": "assets/retro-branches.png",
+      "atlasSize": [
+        1774,
+        887
+      ],
+      "frames": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 444,
+          "h": 444
+        },
+        {
+          "x": 444,
+          "y": 0,
+          "w": 443,
+          "h": 444
+        },
+        {
+          "x": 887,
+          "y": 0,
+          "w": 443,
+          "h": 444
+        },
+        {
+          "x": 1330,
+          "y": 0,
+          "w": 444,
+          "h": 444
+        },
+        {
+          "x": 0,
+          "y": 444,
+          "w": 444,
+          "h": 443
+        },
+        {
+          "x": 444,
+          "y": 444,
+          "w": 443,
+          "h": 443
+        },
+        {
+          "x": 887,
+          "y": 444,
+          "w": 443,
+          "h": 443
+        },
+        {
+          "x": 1330,
+          "y": 444,
+          "w": 444,
+          "h": 443
+        }
+      ],
+      "pivot": [
+        0.5,
+        0.5
+      ],
+      "filter": "nearest",
+      "branchSize": [
+        1585,
+        992
+      ],
+      "animationFps": 8,
+      "notes": "8 turn frames of one leaf; approximate AI-generated turn cycle",
+      "inPlaneRocking": {
+        "function": "retroTilt",
+        "amplitudeRadians": [
+          0.24,
+          0.055
+        ],
+        "angularFrequencies": [
+          1.65,
+          3.1
+        ],
+        "angleStepDegrees": 3,
+        "initialTiltFactor": 0.2,
+        "independentFromTurnFrames": true
+      },
+      "pile": "assets/retro-pile-poses.png",
+      "pileAtlasSize": [
+        1536,
+        1024
+      ],
+      "pileFrames": [
+        {
+          "x": 47,
+          "y": 179,
+          "w": 437,
+          "h": 230
+        },
+        {
+          "x": 558,
+          "y": 159,
+          "w": 419,
+          "h": 262
+        },
+        {
+          "x": 1054,
+          "y": 125,
+          "w": 434,
+          "h": 296
+        },
+        {
+          "x": 47,
+          "y": 701,
+          "w": 437,
+          "h": 162
+        },
+        {
+          "x": 544,
+          "y": 676,
+          "w": 439,
+          "h": 193
+        },
+        {
+          "x": 1052,
+          "y": 678,
+          "w": 438,
+          "h": 182
+        }
+      ],
+      "pileFrameOrder": [
+        "low-oblique",
+        "curled-tip",
+        "folded-lobes",
+        "edge-on",
+        "v-fold",
+        "underside"
+      ]
+    }
+  },
+  "branchRendering": {
+    "mode": "anchored-pieces",
+    "sourceFractions": {
+      "left": [
+        0,
+        0.32
+      ],
+      "top": [
+        0.32,
+        0.68
+      ],
+      "right": [
+        0.68,
+        1
+      ]
+    },
+    "sourceHeightFraction": 0.53,
+    "internalEdgeFadePixels": 32,
+    "sourcePixelToScreenPixel": {
+      "realistic": 0.52,
+      "retro": 0.44
+    },
+    "narrowScreenScaleLimit": "viewportWidth / 950",
+    "topRepeat": true,
+    "revealDurationSeconds": 0.55,
+    "wind": {
+      "defaultStrength": 0.55,
+      "maxRotationRadians": 0.018,
+      "maxTranslationPixels": [
+        2.5,
+        1.7
+      ],
+      "independentPhases": true
+    }
+  },
+  "piles": {
+    "mode": "individual-sleeping-leaves-with-cached-render",
+    "profileSpacingPixels": 16,
+    "maxHeight": "min(viewportHeight * 0.3, 240)",
+    "rebuildOnRemoval": true,
+    "maxTotalLeaves": 2000,
+    "maxMovingLeaves": 420,
+    "defaultPileLeaves": 120,
+    "restPoseProbability": 0.8,
+    "clearOnStyleChange": true
+  },
+  "blower": {
+    "rangePixels": 460,
+    "coneHalfSlope": 0.38,
+    "defaultPower": 0.65,
+    "maxWakesPerStep": 16,
+    "controls": "Left mouse press sets nozzle origin; drag aims; release stops; wheel rotates; Escape stops",
+    "states": [
+      "rest",
+      "slide",
+      "air"
+    ],
+    "gravityBlownPixelsPerSecondSquared": 200
+  }
+}

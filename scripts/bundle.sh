@@ -13,6 +13,7 @@ for arch in arm64 x86_64; do
 done
 lipo -create -output "$app/Contents/MacOS/ExtremeCleanup" "$work"/ExtremeCleanup-*
 cp Support/Info.plist "$app/Contents/"
+cp -R Support/assets "$app/Contents/Resources/"
 
 iconset="$work/AppIcon.iconset"
 mkdir -p "$iconset"

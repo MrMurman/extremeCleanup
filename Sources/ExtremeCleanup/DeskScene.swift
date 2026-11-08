@@ -1,11 +1,21 @@
 import SpriteKit
 
 final class DeskScene: SKScene {
-    enum Tool: String { case hammer = "Hammer", minigun = "Minigun" }
+    enum Tool: String { case hammer = "Hammer", minigun = "Minigun", leafBlower = "Leaf blower" }
 
     var tool: Tool = .hammer {
-        didSet { stopFiring(); announce(tool.rawValue); toolbelt?.select(tool); pointer.tool = tool }
+        didSet {
+            stopFiring()
+            stopBlowing()
+            announce(tool.rawValue)
+            toolbelt?.select(tool)
+            pointer.tool = tool
+            // Autumn is driven by a standalone toggle; the leaf blower is just today's trigger for it.
+            tool == .leafBlower ? startAutumn() : stopAutumn()
+        }
     }
+    /// The global art style the leaves use. Set before the scene is presented.
+    var style: AutumnStyle = .retro
     /// Asks the app to switch every display to a tool picked on the belt.
     var onPickTool: ((Tool) -> Void)?
     /// Asks the app to sweep every display, when the broom on the belt is clicked.
@@ -13,7 +23,7 @@ final class DeskScene: SKScene {
     var onClean: (() -> Void)?
     private var toolbelt: Toolbelt?
     private let pointer = ToolCursor()
-    private var pointerRefresh = 0
+    private var nextPointerRefresh: CFTimeInterval = 0
     /// While set, the tool stands here instead of on the mouse, and the mouse is ignored: a directed take.
     var scriptedPointer: CGPoint? {
         didSet { if let scriptedPointer { lookToward(scriptedPointer) } }
@@ -28,6 +38,8 @@ final class DeskScene: SKScene {
     private let iconLayer = SKNode()
     private let patchLayer = SKNode()
     private let tendrilLayer = SKNode()
+    private let leafLayer = SKNode()
+    private var leaves: Leaves?
     private let theVoid: TheVoid
     private let tendrils: Tendrils
     private let debugLayer = SKNode()
@@ -37,6 +49,8 @@ final class DeskScene: SKScene {
     /// Desktop icons still stuck to the glass, as tiles (icon plus label) in scene coordinates.
     private var icons: [CGRect]
     private(set) var iconsDropped = 0
+    /// Open windows in the snapshot, front to back, in scene coordinates.
+    private let windows: [CGRect]
     private var broom: SKSpriteNode?
     private(set) var isClean = false
 
@@ -63,12 +77,22 @@ final class DeskScene: SKScene {
     private(set) var roundsFired = 0
     private(set) var shatters = 0
 
-    init(shot: ScreenShot, icons: [DesktopIcon], showsControls: Bool) {
+    /// Where the leaf blower is aimed while the mouse is held; nil when it isn't blowing.
+    /// Where the leaf blower's nozzle sits while the mouse is held; nil when it isn't blowing.
+    private var blowOrigin: CGPoint?
+    /// Which way the cone points, set by dragging away from the origin.
+    private var blowAngle: CGFloat = 0
+    private let airStream = SKEmitterNode()
+    private var nextBlowSound: TimeInterval = 0
+    private let blowPower: CGFloat = 0.72
+
+    init(shot: ScreenShot, icons: [DesktopIcon], windows: [CGRect] = [], showsControls: Bool) {
         backdropTexture = DeskScene.texture(from: shot.image)
         snapshot = shot.image
         wallpaper = shot.wallpaper
         let origin = shot.screen.frame.origin
         self.icons = icons.map(\.tile).filter { shot.screen.frame.contains($0) }.map { $0.offsetBy(dx: -origin.x, dy: -origin.y) }
+        self.windows = windows.map { $0.offsetBy(dx: -origin.x, dy: -origin.y) }
         let size = shot.screen.frame.size
         mask = CGContext(data: nil, width: Int(size.width / 2), height: Int(size.height / 2), bitsPerComponent: 8,
                          bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -92,6 +116,7 @@ final class DeskScene: SKScene {
         crackLayer.zPosition = 1
         shardLayer.zPosition = 2
         iconLayer.zPosition = 2.5
+        leafLayer.zPosition = 2.6
         debugLayer.zPosition = 10
         surface.addChild(backdrop)
         surface.addChild(patchLayer)
@@ -102,8 +127,10 @@ final class DeskScene: SKScene {
         world.addChild(surface)
         world.addChild(shardLayer)
         world.addChild(iconLayer)
+        world.addChild(leafLayer)
         addChild(world)
         setUpShells()
+        setUpAirStream()
 
         // Floor and walls, open at the top, so debris piles up at the bottom of the screen.
         let bounds = CGMutablePath()
@@ -139,11 +166,32 @@ final class DeskScene: SKScene {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    override func didMove(to view: SKView) {
+        super.didMove(to: view)
+        // Built here rather than in init because the art style isn't known until the scene is dressed.
+        if leaves == nil {
+            leaves = Leaves(layer: leafLayer, size: size, assets: AutumnAssets.bundled.assets(for: style), style: style)
+            leaves?.onGust = { SoundFX.shared.playGust(seconds: $0, strength: $1, direction: $2) }
+            let iconLedges = icons.compactMap {
+                DeskScene.iconLedge($0, cutout: DeskScene.iconCutout($0, snapshot: snapshot, wallpaper: wallpaper, sceneSize: size))
+            }
+            leaves?.setLedges(iconLedges + DeskScene.windowLedges(windows, sceneSize: size))
+        }
+    }
+
     func toggleDebug() {
         debugLayer.isHidden.toggle()
         view?.showsFPS = !debugLayer.isHidden
         view?.showsNodeCount = !debugLayer.isHidden
     }
+
+    // MARK: - Autumn
+
+    /// Turns on falling leaves. Kept separate from tool selection so a future trigger (a launcher
+    /// setting, say) can start autumn without going through the belt.
+    func startAutumn() { leaves?.start() }
+    func stopAutumn() { leaves?.stop() }
+    var isAutumnOn: Bool { leaves?.isOn ?? false }
 
     // MARK: - Input
 
@@ -183,6 +231,7 @@ final class DeskScene: SKScene {
         switch tool {
         case .hammer: pointer.swing { [weak self] in self?.hammer(at: point) }
         case .minigun: startFiring(at: point)
+        case .leafBlower: startBlowing(at: point)
         }
     }
 
@@ -190,11 +239,13 @@ final class DeskScene: SKScene {
         guard scriptedPointer == nil else { return }
         lookToward(event.location(in: self))
         if trigger != nil { aim(at: event.location(in: self)) }
+        if blowOrigin != nil { aimBlow(at: event.location(in: self)) }
     }
 
     override func mouseUp(with event: NSEvent) {
         guard scriptedPointer == nil else { return }
         stopFiring()
+        stopBlowing()
     }
 
     func hammer(at point: CGPoint) {
@@ -223,6 +274,31 @@ final class DeskScene: SKScene {
         pointer.spin(false)
     }
 
+    func startBlowing(at point: CGPoint) {
+        guard broom == nil, !isClean, tool == .leafBlower else { return }
+        blowOrigin = point
+        airStream.position = point
+        airStream.particleBirthRate = 240
+        nextBlowSound = 0
+        pointer.blow(true)
+    }
+
+    /// Dragging away from the nozzle aims the cone along that direction.
+    func aimBlow(at point: CGPoint) {
+        guard let origin = blowOrigin else { return }
+        if hypot(point.x - origin.x, point.y - origin.y) > 12 {
+            blowAngle = atan2(point.y - origin.y, point.x - origin.x)
+            airStream.emissionAngle = blowAngle
+        }
+    }
+
+    func stopBlowing() {
+        blowOrigin = nil
+        airStream.particleBirthRate = 0
+        pointer.blow(false)
+        leaves?.setBlow(on: false, origin: .zero, angle: 0, power: blowPower)
+    }
+
     private func fireRound(at aim: CGPoint) {
         roundsFired += 1
         let angle = CGFloat.random(in: 0..<2 * .pi), spread = 7 * sqrt(CGFloat.random(in: 0...1))
@@ -235,6 +311,7 @@ final class DeskScene: SKScene {
         shake(strength: 1.5)
         apply(damage.hit(at: point, amount: roundDamage), impact: point)
     }
+
 
     // MARK: - Damage rendering
 
@@ -304,6 +381,7 @@ final class DeskScene: SKScene {
         glints(at: centre, radius: radius)
         theVoid.open()
         dropIcons(in: outline, impact: impact)
+        leaves?.breakLedges(in: outline)
         tendrils.swallow(outline)
         tendrils.grow(around: polygon, centre: centre, radius: radius, seed: seed) { root in
             holes.contains { $0.contains(root) }
@@ -387,6 +465,7 @@ final class DeskScene: SKScene {
         let falling = icons.filter { hole.contains(CGPoint(x: $0.midX, y: $0.midY)) }
         icons.removeAll { tile in falling.contains(tile) }
         for tile in falling {
+            leaves?.removeLedge(tile)
             let corners = [CGPoint(x: tile.minX, y: tile.minY), CGPoint(x: tile.maxX, y: tile.minY),
                            CGPoint(x: tile.maxX, y: tile.maxY), CGPoint(x: tile.minX, y: tile.maxY)]
             let patch = SKSpriteNode(texture: cut(corners, from: wallpaper, outlined: false), size: tile.size)
@@ -411,9 +490,22 @@ final class DeskScene: SKScene {
         }
     }
 
+    private func iconTexture(_ tile: CGRect) -> SKTexture {
+        let cut = DeskScene.iconCutout(tile, snapshot: snapshot, wallpaper: wallpaper, sceneSize: size)
+        return SKTexture(data: Data(cut.pixels), size: CGSize(width: cut.width, height: cut.height), flipped: true)
+    }
+
+    struct IconCutout {
+        /// Premultiplied RGBA, top row first.
+        let pixels: [UInt8]
+        let width, height: Int
+        /// Pixels per point.
+        let scale: CGFloat
+    }
+
     /// The icon and its label without the desktop around them: only pixels that differ from the bare
     /// wallpaper are kept.
-    private func iconTexture(_ tile: CGRect) -> SKTexture {
+    static func iconCutout(_ tile: CGRect, snapshot: CGImage, wallpaper: CGImage, sceneSize size: CGSize) -> IconCutout {
         let scale = CGFloat(snapshot.width) / size.width
         let width = Int(ceil(tile.width * scale)), height = Int(ceil(tile.height * scale))
         func pixels(of image: CGImage) -> [UInt8] {
@@ -436,8 +528,45 @@ final class DeskScene: SKScene {
             for c in 0..<3 { icon[i + c] = UInt8(Int(icon[i + c]) * alpha / 255) }
             icon[i + 3] = UInt8(alpha)
         }
-        let data = Data(icon)
-        return SKTexture(data: data, size: CGSize(width: width, height: height), flipped: true)
+        return IconCutout(pixels: icon, width: width, height: height, scale: scale)
+    }
+
+    /// The top edge of the icon's image (its label doesn't count), for falling leaves to settle on.
+    /// Nil when the image area shows nothing.
+    static func iconLedge(_ tile: CGRect, cutout cut: IconCutout) -> Leaves.Ledge? {
+        let image = DesktopIcon.image(inTile: tile)
+        let step: CGFloat = 4
+        let imageRows = min(cut.height, Int(((tile.maxY - image.minY) * cut.scale).rounded()))
+        var tops: [CGFloat?] = []
+        var x = image.minX
+        while x + step <= image.maxX + 0.5 {
+            let column = min(cut.width - 1, Int((x + step / 2 - tile.minX) * cut.scale))
+            let row = (0..<imageRows).first { cut.pixels[($0 * cut.width + column) * 4 + 3] > 128 }
+            tops.append(row.map { tile.maxY - (CGFloat($0) + 0.5) / cut.scale })
+            x += step
+        }
+        guard tops.contains(where: { $0 != nil }) else { return nil }
+        return Leaves.Ledge(frame: tile, minX: image.minX, step: step, tops: tops, capacity: Leaves.Ledge.iconLeaves)
+    }
+
+    /// The visible part of each window's top edge: on screen, clear of the rounded corners, and not
+    /// behind a window further forward.
+    static func windowLedges(_ stack: [CGRect], sceneSize size: CGSize) -> [Leaves.Ledge] {
+        let step: CGFloat = 4, corner: CGFloat = 14
+        return stack.enumerated().compactMap { index, frame in
+            let top = frame.maxY
+            guard top > 0, top < size.height else { return nil }
+            let minX = max(0, frame.minX + corner), maxX = min(size.width, frame.maxX - corner)
+            guard maxX - minX >= step else { return nil }
+            let tops: [CGFloat?] = stride(from: minX, to: maxX - step + 0.01, by: step).map { x in
+                let point = CGPoint(x: x + step / 2, y: top - 1)
+                return stack[..<index].contains { $0.contains(point) } ? nil : top
+            }
+            let open = tops.filter { $0 != nil }.count
+            guard open > 0 else { return nil }
+            let capacity = max(Leaves.Ledge.iconLeaves, Int(CGFloat(open) * step / 64 * CGFloat(Leaves.Ledge.windowLeavesPer64pt)))
+            return Leaves.Ledge(frame: frame, minX: minX, step: step, tops: tops, capacity: capacity)
+        }
     }
 
     // MARK: - Tidy-up
@@ -446,6 +575,8 @@ final class DeskScene: SKScene {
     func sweep() {
         guard broom == nil, !isClean else { return }
         stopFiring()
+        stopBlowing()
+        leaves?.beginSweep()
         SoundFX.shared.play(.sweep)
 
         // Floor runs on past the left edge, with no wall there, so the debris can be pushed out.
@@ -504,6 +635,7 @@ final class DeskScene: SKScene {
             .run { [weak self] in
                 self?.shardLayer.run(.fadeOut(withDuration: 0.4))
                 self?.iconLayer.run(.fadeOut(withDuration: 0.4))
+                self?.leafLayer.run(.fadeOut(withDuration: 0.4))
             },
             .run { clean.run(.fadeIn(withDuration: 0.9)) },
             .wait(forDuration: 0.9),
@@ -624,6 +756,27 @@ final class DeskScene: SKScene {
         shells.zPosition = 4
         shells.targetNode = world
         world.addChild(shells)
+    }
+
+    /// Faint air thrown from the nozzle while the blower is held.
+    private func setUpAirStream() {
+        airStream.particleTexture = DeskScene.dot
+        airStream.particleBirthRate = 0
+        airStream.particleLifetime = 0.25
+        airStream.particleLifetimeRange = 0.1
+        airStream.particleSpeed = 330
+        airStream.particleSpeedRange = 150
+        airStream.emissionAngleRange = 2 * .pi
+        airStream.particlePositionRange = CGVector(dx: 10, dy: 10)
+        airStream.particleAlpha = 0.22
+        airStream.particleAlphaSpeed = -1.0
+        airStream.particleScale = 0.2
+        airStream.particleScaleRange = 0.12
+        airStream.particleColor = NSColor(white: 1, alpha: 1)
+        airStream.particleColorBlendFactor = 1
+        airStream.zPosition = 3
+        airStream.targetNode = world
+        world.addChild(airStream)
     }
 
     private func announce(_ text: String) {
@@ -749,8 +902,7 @@ final class DeskScene: SKScene {
         if let scriptedPointer {
             pointer.isHidden = false
             pointer.position = scriptedPointer
-            pointerRefresh = (pointerRefresh + 1) % 15
-            if NSApp.isActive && (NSCursor.current != ToolCursor.blank || pointerRefresh == 0) { ToolCursor.blank.set() }
+            if NSApp.isActive && (NSCursor.current != ToolCursor.blank || pointerRefreshDue()) { ToolCursor.blank.set() }
             return
         }
         let mouse = NSEvent.mouseLocation
@@ -764,16 +916,26 @@ final class DeskScene: SKScene {
         let wanted = overOverlay ? ToolCursor.blank : NSCursor.arrow
         // macOS can put its own pointer back without `NSCursor.current` noticing, so over the game the hidden one
         // is re-applied a few times a second rather than only when it looks lost.
-        pointerRefresh = (pointerRefresh + 1) % 15
-        if NSCursor.current != wanted || (inside && pointerRefresh == 0) { wanted.set() }
+        if NSCursor.current != wanted || (inside && pointerRefreshDue()) { wanted.set() }
+    }
+
+    /// Setting the cursor is a round trip to the window server that can stall a frame, so the routine
+    /// re-apply runs on a clock, not every few frames: at 120 Hz that was eight stalls a second.
+    private func pointerRefreshDue() -> Bool {
+        let now = CACurrentMediaTime()
+        guard now >= nextPointerRefresh else { return false }
+        nextPointerRefresh = now + 0.5
+        return true
     }
 
     func resetFrameStats() { worstFPS = .infinity; windowStart = 0 }
 
     override func update(_ currentTime: TimeInterval) {
         if let broom, let body = broom.physicsBody {
-            body.velocity = CGVector(dx: -(size.width + 2 * DeskScene.broomSize.width) / 1.4, dy: 0)
+            let sweepVelocity = -(size.width + 2 * DeskScene.broomSize.width) / 1.4
+            body.velocity = CGVector(dx: sweepVelocity, dy: 0)
             broom.position.y = 0
+            leaves?.sweepPast(broom.position.x, speed: sweepVelocity * 1.25)
         }
         let dt = lastUpdate == 0 ? 0 : min(currentTime - lastUpdate, 0.1)
         lastUpdate = currentTime
@@ -781,6 +943,14 @@ final class DeskScene: SKScene {
         gaze = gaze.moved(toward: gazeTarget, by: 0.06)
         theVoid.look(gaze)
         theVoid.advance(by: dt)
+        if let origin = blowOrigin {
+            leaves?.setBlow(on: true, origin: origin, angle: blowAngle, power: blowPower)
+            if currentTime >= nextBlowSound {
+                SoundFX.shared.play(.blow, volume: 0.5)
+                nextBlowSound = currentTime + 0.55
+            }
+        }
+        leaves?.advance(by: dt)
         if let aim = trigger {
             if nextRoundAt == 0 { nextRoundAt = currentTime }
             while currentTime >= nextRoundAt {

@@ -69,6 +69,22 @@ enum Snapshot {
         }
     }
 
+    /// Ordinary app windows front to back, in global AppKit coordinates. Frames only, so this needs
+    /// no screen-recording access; the order tells which window hides another's top edge.
+    static func windowStack() -> [CGRect] {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let mainHeight = NSScreen.screens.first?.frame.height ?? 0
+        return list.compactMap { info in
+            guard info[kCGWindowLayer as String] as? Int == 0,
+                  info[kCGWindowOwnerPID as String] as? Int32 != getpid(),
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds), frame.width > 40, frame.height > 40
+            else { return nil }
+            return CGRect(x: frame.minX, y: mainHeight - frame.maxY, width: frame.width, height: frame.height)
+        }
+    }
+
     private static func capture(_ filter: SCContentFilter) async throws -> CGImage {
         let config = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)

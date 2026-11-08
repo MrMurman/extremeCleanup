@@ -6,7 +6,7 @@ final class Toolbelt: SKNode {
     var onPick: ((DeskScene.Tool) -> Void)?
     var onSweep: (() -> Void)?
 
-    private let tools: [DeskScene.Tool?] = [.hammer, .minigun, nil, nil, nil, nil, nil, nil]
+    private let tools: [DeskScene.Tool?] = [.hammer, .minigun, .leafBlower, nil, nil, nil, nil, nil]
     private static let pocket: CGFloat = 64, gap: CGFloat = 6, pad: CGFloat = 12, width: CGFloat = 86
     private static var height: CGFloat { pad * 2 + pocket * 8 + gap * 7 }
     private static let cordLength: CGFloat = 16

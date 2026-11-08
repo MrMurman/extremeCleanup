@@ -154,7 +154,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let icons = DesktopIcons.read()
         let windowFrames = await Snapshot.windowFrames()
         self.shots = shots
-        show(shots, icons: DesktopIcons.uncovered(icons, by: windowFrames), controls: settings.controls)
+        show(shots, icons: DesktopIcons.uncovered(icons, by: windowFrames), windows: Snapshot.windowStack(),
+             controls: settings.controls, style: settings.style)
         select(.hammer)
     }
 
@@ -172,7 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launcher.show()
     }
 
-    private func show(_ shots: [ScreenShot], icons: [DesktopIcon], controls: CGDirectDisplayID) {
+    private func show(_ shots: [ScreenShot], icons: [DesktopIcon], windows stack: [CGRect], controls: CGDirectDisplayID,
+                      style: AutumnStyle) {
         for shot in shots {
             let window = OverlayWindow(contentRect: shot.screen.frame, styleMask: .borderless,
                                        backing: .buffered, defer: false)
@@ -188,8 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let view = OverlayView(frame: CGRect(origin: .zero, size: shot.screen.frame.size))
             view.ignoresSiblingOrder = true
             view.preferredFramesPerSecond = shot.screen.maximumFramesPerSecond
-            let scene = DeskScene(shot: shot, icons: icons,
+            let scene = DeskScene(shot: shot, icons: icons, windows: stack,
                                   showsControls: Snapshot.displayID(of: shot.screen) == controls)
+            scene.style = style
             scene.onPickTool = { [weak self] tool in self?.select(tool) }
             scene.onSweepRequest = { [weak self] in self?.scenes.forEach { $0.sweep() } }
             scene.onClean = { Music.shared.set(.finale) }
@@ -243,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case 46: toggleMusic()  // M
             case 18: select(.hammer)  // 1
             case 19: select(.minigun)  // 2
+            case 20: select(.leafBlower)  // 3
             default: return event
             }
             return nil

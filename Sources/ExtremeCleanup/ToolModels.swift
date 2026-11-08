@@ -46,10 +46,12 @@ enum ToolModels {
         let scene = SCNScene()
         scene.background.contents = NSColor.clear
         let yaw = SCNNode(), roll = SCNNode()
-        yaw.eulerAngles.y = tool == .hammer ? 0.45 : 0.35
-        roll.eulerAngles.z = tool == .hammer ? 0.78 : 0.72
         let body = SCNNode()
-        tool == .hammer ? buildHammer(in: body) : buildMinigun(in: body)
+        switch tool {
+        case .hammer: yaw.eulerAngles.y = 0.45; roll.eulerAngles.z = 0.78; buildHammer(in: body)
+        case .minigun: yaw.eulerAngles.y = 0.35; roll.eulerAngles.z = 0.72; buildMinigun(in: body)
+        case .leafBlower: yaw.eulerAngles.y = 0.4; roll.eulerAngles.z = 0.68; buildLeafBlower(in: body)
+        }
         roll.addChildNode(body)
         yaw.addChildNode(roll)
         scene.rootNode.addChildNode(yaw)
@@ -78,8 +80,12 @@ enum ToolModels {
             let p = renderer.projectPoint(body.convertPosition(local, to: nil))
             return CGPoint(x: p.x / 2, y: p.y / 2)
         }
-        let tip = tool == .hammer ? SCNVector3(-0.39, 0.66, 0) : SCNVector3(0, 0.95, 0)
-        let grip = tool == .hammer ? SCNVector3(0, -0.7, 0) : SCNVector3(0.3, -0.32, 0)
+        let tip: SCNVector3, grip: SCNVector3
+        switch tool {
+        case .hammer: tip = SCNVector3(-0.39, 0.66, 0); grip = SCNVector3(0, -0.7, 0)
+        case .minigun: tip = SCNVector3(0, 0.95, 0); grip = SCNVector3(0.3, -0.32, 0)
+        case .leafBlower: tip = SCNVector3(0, 0.98, 0); grip = SCNVector3(-0.05, -0.5, 0)
+        }
         return CursorArt(frames: frames, size: CGSize(width: side, height: side), hotspot: project(tip), grip: project(grip),
                          eject: project(SCNVector3(0.24, -0.08, 0)))
     }
@@ -96,10 +102,10 @@ enum ToolModels {
     private static func model(of tool: DeskScene.Tool) -> SCNNode {
         let root = SCNNode()
         switch tool {
-        case .hammer: buildHammer(in: root)
-        case .minigun: buildMinigun(in: root)
+        case .hammer: buildHammer(in: root); root.eulerAngles.z = -0.62
+        case .minigun: buildMinigun(in: root); root.eulerAngles.z = -1.0
+        case .leafBlower: buildLeafBlower(in: root); root.eulerAngles.z = -0.55
         }
-        root.eulerAngles.z = tool == .minigun ? -1.0 : -0.62
         return root
     }
 
@@ -157,5 +163,20 @@ enum ToolModels {
             at: SCNVector3(0.3, -0.32, 0), rotation: SCNVector3(0, 0, 0.25))
         add(SCNBox(width: 0.07, height: 0.42, length: 0.07, chamferRadius: 0.02), gunmetal, to: root,
             at: SCNVector3(-0.29, -0.15, 0))
+    }
+
+    private static func buildLeafBlower(in root: SCNNode) {
+        let shell = material(NSColor(red: 0.9, green: 0.45, blue: 0.12, alpha: 1), shine: 0.7)
+        let dark = material(NSColor(white: 0.18, alpha: 1), shine: 0.5)
+        let grip = material(NSColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1), shine: 0.3)
+        add(SCNBox(width: 0.5, height: 0.62, length: 0.44, chamferRadius: 0.14), shell, to: root, at: SCNVector3(0, -0.02, 0))
+        add(SCNCylinder(radius: 0.24, height: 0.08), dark, to: root, at: SCNVector3(0, -0.02, -0.22),
+            rotation: SCNVector3(CGFloat.pi / 2, 0, 0))
+        add(SCNCone(topRadius: 0.085, bottomRadius: 0.2, height: 0.72), dark, to: root, at: SCNVector3(0, 0.52, 0.02))
+        add(SCNTorus(ringRadius: 0.09, pipeRadius: 0.022), shell, to: root, at: SCNVector3(0, 0.88, 0.02))
+        add(SCNBox(width: 0.1, height: 0.38, length: 0.13, chamferRadius: 0.04), grip, to: root,
+            at: SCNVector3(0, -0.5, 0), rotation: SCNVector3(0, 0, 0.18))
+        add(SCNBox(width: 0.06, height: 0.14, length: 0.06, chamferRadius: 0.02), dark, to: root,
+            at: SCNVector3(0.12, -0.32, 0), rotation: SCNVector3(0, 0, 0.4))
     }
 }
