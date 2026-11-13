@@ -39,10 +39,11 @@ struct DamageModel {
     private(set) var sites: [Site] = []
     private var nextID = 0
 
-    mutating func hit(at point: CGPoint, amount: Double) -> HitResult {
+    /// `cap` limits the damage this hit can bring a site to; it never lowers damage the site already has.
+    mutating func hit(at point: CGPoint, amount: Double, cap: Double = .infinity) -> HitResult {
         let near = sites.indices.filter { sites[$0].centre.distance(to: point) <= mergeRadius }
         guard !near.isEmpty else {
-            let site = Site(id: nextID, centre: point, damage: amount)
+            let site = Site(id: nextID, centre: point, damage: min(amount, cap))
             nextID += 1
             sites.append(site)
             return HitResult(site: site, previousStage: .intact, previousDamage: 0, merged: [])
@@ -57,7 +58,7 @@ struct DamageModel {
         var site = keeper
         site.centre = CGPoint(x: weighted.x / total, y: weighted.y / total)
         site.centre = site.centre.moved(toward: point, by: drift * CGFloat(min(amount, 1)))
-        site.damage = total + amount
+        site.damage = max(total, min(total + amount, cap))
 
         let mergedIDs = group.map(\.id).filter { $0 != keeper.id }
         sites.removeAll { s in group.contains { $0.id == s.id } }

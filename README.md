@@ -95,6 +95,8 @@ Inspired by *Desktop Destroyer* (freeware, 2000s). No code, art or sound from th
 - **Autumn art:** the leaves and branches were generated with AI (ChatGPT, OpenAI's gpt-image model), together
   with a browser prototype of the leaf physics that the game's version grew from. `scripts/clean-autumn-art.py`
   prepares the generated images for the game.
+- **Crack art:** the leaf blower's fracture textures were generated with AI (ChatGPT, OpenAI's gpt-image model);
+  `scripts/build-fracture-crack-art.py` prepares them for the game.
 
 ## License
 

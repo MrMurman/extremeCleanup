@@ -87,6 +87,63 @@ enum Demo {
         try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
     }
 
+    /// Holds the blower on one aim so the fracture can be inspected at both stages.
+    static func blower(scene: DeskScene, screen: NSScreen, into dir: URL) async {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var report = ""
+        func check(_ name: String, _ ok: Bool) { report += (ok ? "PASS " : "FAIL ") + name + "\n" }
+
+        scene.tool = .leafBlower
+        scene.stopAutumn()
+        try? await Task.sleep(for: .seconds(1))
+        let origin = CGPoint(x: scene.size.width * 0.34, y: scene.size.height * 0.55)
+        var worst: TimeInterval = 0
+
+        /// Reads the phase's worst frame and starts a new phase. Captures happen after the run, so
+        /// the script's own screen grabs can never count against the game's frame budget.
+        func phase(_ name: String) {
+            let frame = scene.worstFrame
+            worst = max(worst, frame)
+            report += String(format: "%@: worst frame %.1f ms\n", name, frame * 1000)
+            scene.resetFrameStats()
+        }
+
+        scene.resetFrameStats()
+        scene.startBlowing(at: origin)
+        scene.aimBlow(at: CGPoint(x: origin.x + 140, y: origin.y))
+
+        try? await Task.sleep(for: .seconds(2.5))
+        phase("0–2.5 s")
+        check("no crack before 3 s", scene.damagedSites == 0)
+        try? await Task.sleep(for: .seconds(0.9))
+        phase("crack")
+        check("crack after 3 s", scene.siteStages.contains(.crack))
+        try? await Task.sleep(for: .seconds(3.2))
+        phase("big crack")
+        check("big crack after 6 s", scene.siteStages.contains(.bigCrack))
+        try? await Task.sleep(for: .seconds(0.7))
+        phase("grown")
+        check("exactly one crack site", scene.damagedSites == 1)
+        check("no hole", !scene.siteStages.contains(.shattered))
+        render(scene, to: dir.appendingPathComponent("5-final-scene.png"))
+        await capture(screen, to: dir.appendingPathComponent("5-final.png"))
+        let milliseconds = worst * 1000
+        report += "style: textureFracture, worst frame: \(String(format: "%.1f", milliseconds)) ms\n"
+        check("frame under 25 ms", milliseconds < 25)
+        scene.stopBlowing()
+
+        // A second site, stopped at the small stage, so the first crack can be inspected too.
+        try? await Task.sleep(for: .seconds(0.4))
+        let second = CGPoint(x: scene.size.width * 0.72, y: scene.size.height * 0.55)
+        scene.startBlowing(at: second)
+        scene.aimBlow(at: CGPoint(x: second.x - 140, y: second.y))
+        try? await Task.sleep(for: .seconds(3.4))
+        render(scene, to: dir.appendingPathComponent("6-crack-stage-scene.png"))
+        await capture(screen, to: dir.appendingPathComponent("6-crack-stage.png"))
+        scene.stopBlowing()
+        try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
+    }
+
     static func void(scene: DeskScene, screen: NSScreen, into dir: URL) async {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let w = scene.size.width, h = scene.size.height
@@ -550,6 +607,13 @@ enum Demo {
             try? await Task.sleep(for: .milliseconds(10))
         }
         scene.stopFiring()
+    }
+
+    /// Renders the scene through its own view, so the crack can be inspected even when Screen
+    /// Recording permission (needed by `capture`) is not granted.
+    private static func render(_ scene: DeskScene, to url: URL) {
+        guard let view = scene.view, let texture = view.texture(from: scene) else { return }
+        write(texture.cgImage(), to: url)
     }
 
     private static func capture(_ screen: NSScreen, to url: URL) async {

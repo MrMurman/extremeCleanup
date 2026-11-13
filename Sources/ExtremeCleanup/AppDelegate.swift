@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sweepDemoDir = AppDelegate.directory(after: "--demo-sweep")
     private let beltDemoDir = AppDelegate.directory(after: "--demo-belt")
     private let cursorDemoDir = AppDelegate.directory(after: "--demo-cursor")
+    private let blowerDemoDir = AppDelegate.directory(after: "--demo-blower")
     /// `--demo-launcher <dir>`: drives the launcher through Start, Esc and a second Start; `--demo-recall <dir>`
     /// checks on a later launch that the choices came back.
     private let launcherDemoDir = AppDelegate.directory(after: "--demo-launcher")
@@ -73,7 +74,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await direct(choreography) }
             return
         }
-        let scripted = [selfCheckDir, hammerDemoDir, minigunDemoDir, voidDemoDir, sweepDemoDir, beltDemoDir, cursorDemoDir]
+        let scripted = [selfCheckDir, hammerDemoDir, minigunDemoDir, voidDemoDir, sweepDemoDir, beltDemoDir,
+                        cursorDemoDir, blowerDemoDir]
         guard scripted.allSatisfy({ $0 == nil }) else {
             Task { await runScripted() }
             return
@@ -114,6 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await Demo.cursor(scene: scene, screen: shot.screen, select: { [weak self] in self?.select($0) }, into: dir)
             } else if let dir = voidDemoDir {
                 await Demo.void(scene: scene, screen: shot.screen, into: dir)
+            } else if let dir = blowerDemoDir {
+                await Demo.blower(scene: scene, screen: shot.screen, into: dir)
             }
         }
         NSApp.terminate(nil)
@@ -199,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             view.presentScene(scene)
             window.contentView = view
             (view.layer as? CAMetalLayer)?.colorspace = shot.image.colorSpace
+            FractureBlowerCrack.prepare(in: view)
             window.makeKeyAndOrderFront(nil)
             windows.append(window)
             scenes.append(scene)

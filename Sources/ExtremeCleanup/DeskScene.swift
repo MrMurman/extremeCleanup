@@ -56,6 +56,11 @@ final class DeskScene: SKScene {
 
     private var damage = DamageModel()
     private var crackNodes: [Int: SKNode] = [:]
+    /// Sites cracked by the blower's air, and the reach each is drawn at (0 until drawn): they are drawn bigger,
+    /// spread out over a moment, and let light through.
+    private var pressureReach: [Int: CGFloat] = [:]
+    private var crackGrowth: [Int: (from: CGFloat, to: CGFloat, start: TimeInterval?)] = [:]
+    private var blowerCracks: [Int: FractureBlowerCrack] = [:]
     private var holes: [CGPath] = []
     private let mask: CGContext
     private let maxShards = 250
@@ -77,7 +82,6 @@ final class DeskScene: SKScene {
     private(set) var roundsFired = 0
     private(set) var shatters = 0
 
-    /// Where the leaf blower is aimed while the mouse is held; nil when it isn't blowing.
     /// Where the leaf blower's nozzle sits while the mouse is held; nil when it isn't blowing.
     private var blowOrigin: CGPoint?
     /// Which way the cone points, set by dragging away from the origin.
@@ -85,6 +89,14 @@ final class DeskScene: SKScene {
     private let airStream = SKEmitterNode()
     private var nextBlowSound: TimeInterval = 0
     private let blowPower: CGFloat = 0.72
+    /// How long the air must stay on one spot to crack the glass there; a big crack takes twice as long.
+    var crackDwell: TimeInterval = 3
+    /// The aim the air has held since `since`, and how many cracks it has made there.
+    private var heldAim: (angle: CGFloat, since: TimeInterval, cracks: Int)?
+    /// Turning the cone further than this starts the count again, so sweeping leaves never cracks anything.
+    private let aimTolerance: CGFloat = 10 * .pi / 180
+    /// Where the air hits the glass, ahead of the nozzle.
+    private let airReach: CGFloat = 120
 
     init(shot: ScreenShot, icons: [DesktopIcon], windows: [CGRect] = [], showsControls: Bool) {
         backdropTexture = DeskScene.texture(from: shot.image)
@@ -202,6 +214,7 @@ final class DeskScene: SKScene {
 
     var creaturesReleased: Int { tendrils.released }
     var damagedSites: Int { damage.sites.count }
+    var siteStages: [DamageModel.Stage] { damage.sites.map(\.stage) }
     var beltPockets: [CGPoint] { toolbelt?.pocketCentres ?? [] }
     var beltCharm: CGPoint? { toolbelt?.charmCentre }
     var beltVisible: Bool { toolbelt.map { !$0.isHidden } ?? false }
@@ -277,6 +290,7 @@ final class DeskScene: SKScene {
     func startBlowing(at point: CGPoint) {
         guard broom == nil, !isClean, tool == .leafBlower else { return }
         blowOrigin = point
+        heldAim = nil
         airStream.position = point
         airStream.particleBirthRate = 240
         nextBlowSound = 0
@@ -294,6 +308,7 @@ final class DeskScene: SKScene {
 
     func stopBlowing() {
         blowOrigin = nil
+        heldAim = nil
         airStream.particleBirthRate = 0
         pointer.blow(false)
         leaves?.setBlow(on: false, origin: .zero, angle: 0, power: blowPower)
@@ -315,8 +330,28 @@ final class DeskScene: SKScene {
 
     // MARK: - Damage rendering
 
+    /// Air held on one spot cracks the glass where it hits, then cracks it wide; it never breaks through.
+    private func pressAir(from origin: CGPoint, at time: TimeInterval) {
+        guard let held = heldAim, abs(atan2(sin(blowAngle - held.angle), cos(blowAngle - held.angle))) <= aimTolerance else {
+            heldAim = (blowAngle, time, 0)
+            return
+        }
+        guard held.cracks < 2, time - held.since >= crackDwell * Double(held.cracks + 1) else { return }
+        heldAim?.cracks += 1
+        let point = CGPoint(x: origin.x + cos(blowAngle) * airReach, y: origin.y + sin(blowAngle) * airReach)
+        guard frame.insetBy(dx: 10, dy: 10).contains(point), !holes.contains(where: { $0.contains(point) }) else { return }
+        let result = damage.hit(at: point, amount: 1, cap: 2)
+        if pressureReach[result.site.id] == nil { pressureReach[result.site.id] = 0 }
+        apply(result, impact: point)
+        if result.site.stage == .bigCrack, result.previousStage < .bigCrack { shake(strength: 6) }
+    }
+
     private func apply(_ result: DamageModel.HitResult, impact: CGPoint) {
-        for id in result.merged { crackNodes.removeValue(forKey: id)?.removeFromParent() }
+        for id in result.merged {
+            crackNodes.removeValue(forKey: id)?.removeFromParent()
+            blowerCracks.removeValue(forKey: id)
+            crackGrowth[id] = nil
+        }
         let site = result.site
         switch site.stage {
         case .intact:
@@ -341,9 +376,24 @@ final class DeskScene: SKScene {
 
     private func drawCracks(for site: DamageModel.Site, stage: DamageModel.Stage? = nil) {
         crackNodes.removeValue(forKey: site.id)?.removeFromParent()
+        blowerCracks.removeValue(forKey: site.id)
         let big = (stage ?? site.stage) >= .bigCrack
-        let path = CrackArt.cracks(around: site.centre, reach: big ? 75 : 34, rings: big, seed: site.id)
+        if let drawn = pressureReach[site.id] {
+            let reach: CGFloat = big ? 230 : 70
+            let from = drawn > 0 ? drawn : reach * 0.1
+            let visual = FractureBlowerCrack(site: site, big: big, from: from, to: reach)
+            crackLayer.addChild(visual.node)
+            crackNodes[site.id] = visual.node
+            blowerCracks[site.id] = visual
+            crackGrowth[site.id] = (from, reach, nil)
+            pressureReach[site.id] = reach
+            visual.burst()
+            growCracks(at: lastUpdate)
+            return
+        }
+        let reach: CGFloat = big ? 75 : 34
         let node = SKNode()
+        let path = CrackArt.cracks(around: site.centre, reach: reach, rings: big, seed: site.id)
         let shadow = SKShapeNode(path: path)
         shadow.strokeColor = NSColor(white: 0, alpha: 0.45)
         shadow.lineWidth = big ? 2.6 : 2
@@ -355,6 +405,19 @@ final class DeskScene: SKScene {
         node.addChild(glint)
         crackLayer.addChild(node)
         crackNodes[site.id] = node
+    }
+
+    /// Spreads the blower's fractures out to their full reach over a moment.
+    private func growCracks(at time: TimeInterval) {
+        for (id, growth) in crackGrowth {
+            guard let visual = blowerCracks[id] else { crackGrowth[id] = nil; continue }
+            let start = growth.start ?? time
+            if growth.start == nil { crackGrowth[id]?.start = time }
+            let k = min(1, CGFloat(time - start) / (growth.to > 100 ? 1.1 : 0.4))
+            let eased = 1 - pow(1 - k, 3)
+            visual.setReach(growth.from + (growth.to - growth.from) * eased)
+            if k >= 1 { crackGrowth[id] = nil }
+        }
     }
 
     private func shatter(around centre: CGPoint, radius: CGFloat, seed: Int, impact: CGPoint) {
@@ -895,6 +958,8 @@ final class DeskScene: SKScene {
     private var framesInWindow = 0
     /// Lowest frames-per-second seen over any one-second window since the last reset.
     private(set) var worstFPS: Double = .infinity
+    /// Longest single frame since the last reset; a one-second average hides a single hitch.
+    private(set) var worstFrame: TimeInterval = 0
 
     /// Keeps the tool on the mouse on this display, and the system arrow wherever no overlay is under it.
     private func trackPointer() {
@@ -928,7 +993,13 @@ final class DeskScene: SKScene {
         return true
     }
 
-    func resetFrameStats() { worstFPS = .infinity; windowStart = 0 }
+    func resetFrameStats() {
+        worstFPS = .infinity
+        worstFrame = 0
+        windowStart = 0
+        // Start a fresh frame interval too, so a pause before the reset is not counted as a hitch.
+        lastUpdate = 0
+    }
 
     override func update(_ currentTime: TimeInterval) {
         if let broom, let body = broom.physicsBody {
@@ -937,7 +1008,9 @@ final class DeskScene: SKScene {
             broom.position.y = 0
             leaves?.sweepPast(broom.position.x, speed: sweepVelocity * 1.25)
         }
-        let dt = lastUpdate == 0 ? 0 : min(currentTime - lastUpdate, 0.1)
+        let raw = lastUpdate == 0 ? 0 : currentTime - lastUpdate
+        if raw > 0 { worstFrame = max(worstFrame, raw) }
+        let dt = lastUpdate == 0 ? 0 : min(raw, 0.1)
         lastUpdate = currentTime
         trackPointer()
         gaze = gaze.moved(toward: gazeTarget, by: 0.06)
@@ -949,7 +1022,9 @@ final class DeskScene: SKScene {
                 SoundFX.shared.play(.blow, volume: 0.5)
                 nextBlowSound = currentTime + 0.55
             }
+            pressAir(from: origin, at: currentTime)
         }
+        growCracks(at: currentTime)
         leaves?.advance(by: dt)
         if let aim = trigger {
             if nextRoundAt == 0 { nextRoundAt = currentTime }

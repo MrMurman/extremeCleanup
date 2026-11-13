@@ -17,10 +17,11 @@ struct SeededRandom: RandomNumberGenerator {
 
 enum CrackArt {
     /// Radial cracks around `centre`; a bigger `reach` adds longer rays and ring fractures.
-    static func cracks(around centre: CGPoint, reach: CGFloat, rings: Bool, seed: Int) -> CGPath {
+    static func cracks(around centre: CGPoint, reach: CGFloat, rings: Bool, seed: Int,
+                       rays: ClosedRange<CGFloat> = 6...9) -> CGPath {
         var rng = SeededRandom(seed: seed)
         let path = CGMutablePath()
-        let rayCount = Int(rng.range(6...9))
+        let rayCount = Int(rng.range(rays))
         var ringPoints: [[CGPoint]] = []
         for i in 0..<rayCount {
             var angle = CGFloat(i) / CGFloat(rayCount) * 2 * .pi + rng.range(-0.3...0.3)
