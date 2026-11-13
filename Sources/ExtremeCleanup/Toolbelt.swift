@@ -53,6 +53,7 @@ final class Toolbelt: SKNode {
                 mark.fontColor = NSColor(red: 0.95, green: 0.86, blue: 0.68, alpha: 0.22)
                 mark.verticalAlignmentMode = .center
                 mark.position = centre
+                mark.zPosition = 1
                 addChild(mark)
                 marks[i] = mark
             }
