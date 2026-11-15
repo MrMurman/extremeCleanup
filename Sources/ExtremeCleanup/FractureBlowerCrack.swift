@@ -8,9 +8,9 @@ final class FractureBlowerCrack {
     private let big: Bool
     private let from: CGFloat
     private let span: CGFloat
-    private let extensionGrowth: SKUniform
-    private let secondGrowth: SKUniform
-    private var thirdGrowth: SKUniform?
+    private let extensionGrowth: SKSpriteNode
+    private let secondGrowth: SKSpriteNode
+    private var thirdGrowth: SKSpriteNode?
     private let previousLight: SKSpriteNode
     private let nextLight: SKSpriteNode
     private var thirdLight: SKSpriteNode?
@@ -24,9 +24,9 @@ final class FractureBlowerCrack {
         vec4 tex = texture2D(u_texture, v_tex_coord);
         vec2 offset = v_tex_coord * 2.0 - vec2(1.0);
         float threshold = clamp(length(offset) / 1.2, 0.0, 1.0);
-        float reveal = smoothstep(threshold - 0.02, threshold + 0.02, u_progress);
-        reveal *= step(0.001, u_progress);
-        if (u_progress >= 0.999) {
+        float reveal = smoothstep(threshold - 0.02, threshold + 0.02, a_progress);
+        reveal *= step(0.001, a_progress);
+        if (a_progress >= 0.999) {
             reveal = 1.0;
         }
         float alpha = tex.a * reveal * 0.68;
@@ -36,8 +36,20 @@ final class FractureBlowerCrack {
     }
     """
 
+    /// One shader for every glass layer: `a_progress` is set per sprite, so adding a crack never compiles a new one.
+    private static let glassShader: SKShader = {
+        let shader = SKShader(source: glassShaderSource)
+        shader.attributes = [SKAttribute(name: "a_progress", type: .float)]
+        return shader
+    }()
+
     private static let centreTexture = makeRadialTexture(side: 96, spark: false)
     private static let sparkTexture = makeRadialTexture(side: 12, spark: true)
+
+    /// Textures are loaded once at launch and then shared; a first crack must not decode or upload its art mid-take.
+    private static let cacheLock = NSLock()
+    private static var cache: [String: SKTexture] = [:]
+    private static var didPrewarm = false
 
     init(site: DamageModel.Site, big: Bool, from: CGFloat, to: CGFloat) {
         self.big = big
@@ -48,35 +60,35 @@ final class FractureBlowerCrack {
         let size = CGSize(width: 460, height: 460)
 
         let base = Self.makeGlass(size: size, progress: 1)
-        node.addChild(base.0)
+        node.addChild(base)
         Self.loadTexture(named: "lvl1-fracture-core.png") {
-            base.0.texture = $0
-            base.0.isHidden = false
+            base.texture = $0
+            base.isHidden = false
         }
 
         let outer = Self.makeGlass(size: size, progress: 0)
-        extensionGrowth = outer.1
-        node.addChild(outer.0)
+        extensionGrowth = outer
+        node.addChild(outer)
         Self.loadTexture(named: "lvl1-fracture-extension.png") {
-            outer.0.texture = $0
-            outer.0.isHidden = false
+            outer.texture = $0
+            outer.isHidden = false
         }
 
         let second = Self.makeGlass(size: size, progress: 0)
-        secondGrowth = second.1
-        node.addChild(second.0)
+        secondGrowth = second
+        node.addChild(second)
         Self.loadTexture(named: "lvl2-fracture.png") {
-            second.0.texture = $0
-            second.0.isHidden = false
+            second.texture = $0
+            second.isHidden = false
         }
 
         if big {
             let third = Self.makeGlass(size: size, progress: 0)
-            thirdGrowth = third.1
-            node.addChild(third.0)
+            thirdGrowth = third
+            node.addChild(third)
             Self.loadTexture(named: "lvl3-fracture.png") {
-                third.0.texture = $0
-                third.0.isHidden = false
+                third.texture = $0
+                third.isHidden = false
             }
         }
 
@@ -131,9 +143,9 @@ final class FractureBlowerCrack {
             let extensionBlend = extensionProgress * extensionProgress * (3 - 2 * extensionProgress)
             let secondBlend = secondProgress * secondProgress * (3 - 2 * secondProgress)
             let thirdBlend = thirdProgress * thirdProgress * (3 - 2 * thirdProgress)
-            extensionGrowth.floatValue = Float(extensionBlend)
-            secondGrowth.floatValue = Float(secondBlend)
-            thirdGrowth?.floatValue = Float(thirdBlend)
+            extensionGrowth.setValue(SKAttributeValue(float: Float(extensionBlend)), forAttribute: "a_progress")
+            secondGrowth.setValue(SKAttributeValue(float: Float(secondBlend)), forAttribute: "a_progress")
+            thirdGrowth?.setValue(SKAttributeValue(float: Float(thirdBlend)), forAttribute: "a_progress")
             previousLight.alpha = 1 - secondBlend
             nextLight.alpha = secondBlend * (1 - thirdBlend)
             thirdLight?.alpha = thirdBlend
@@ -142,8 +154,8 @@ final class FractureBlowerCrack {
                 startPulse()
             }
         } else {
-            extensionGrowth.floatValue = 0
-            secondGrowth.floatValue = 0
+            extensionGrowth.setValue(SKAttributeValue(float: 0), forAttribute: "a_progress")
+            secondGrowth.setValue(SKAttributeValue(float: 0), forAttribute: "a_progress")
             previousLight.alpha = 1
             nextLight.alpha = 0
             let centreFade = min(1, progress / 0.3)
@@ -201,25 +213,57 @@ final class FractureBlowerCrack {
     }
 
     static func prepare(in view: SKView) {
-        let scene = SKScene(size: CGSize(width: 2, height: 2))
-        let sprite = makeGlass(size: scene.size, progress: 1).0
-        sprite.texture = centreTexture
-        sprite.isHidden = false
-        sprite.position = CGPoint(x: 1, y: 1)
-        scene.addChild(sprite)
+        guard !didPrewarm else { return }
+        didPrewarm = true
+
+        let names = ["lvl1-fracture-core.png", "lvl1-fracture-extension.png", "lvl2-fracture.png", "lvl3-fracture.png",
+                     "lvl1-fracture-core-glow.png", "lvl1-fracture-glow.png", "lvl2-fracture-glow.png",
+                     "lvl3-fracture-glow.png"]
+        for name in names { _ = loadTextureSynchronously(named: name) }
+
+        // Render a real fracture at the size it uses, so the shared shader and every texture are warm.
+        let size = CGSize(width: 460, height: 460)
+        let scene = SKScene(size: size)
+        scene.anchorPoint = .zero
+        scene.scaleMode = .resizeFill
+        let site = DamageModel.Site(id: 0, centre: CGPoint(x: size.width / 2, y: size.height / 2), damage: 3)
+        let visual = FractureBlowerCrack(site: site, big: true, from: 0, to: 230)
+        scene.addChild(visual.node)
+        visual.burst()
         _ = view.texture(from: scene)
     }
 
-    private static func makeGlass(size: CGSize, progress: Float) -> (SKSpriteNode, SKUniform) {
+    private static func cachedTexture(named name: String) -> SKTexture? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return cache[name]
+    }
+
+    private static func store(_ texture: SKTexture, as name: String) {
+        cacheLock.lock()
+        cache[name] = texture
+        cacheLock.unlock()
+    }
+
+    private static func loadTextureSynchronously(named name: String) -> SKTexture? {
+        if let cached = cachedTexture(named: name) { return cached }
+        guard let url = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "assets"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let texture = SKTexture(cgImage: image)
+        texture.filteringMode = .linear
+        store(texture, as: name)
+        return texture
+    }
+
+    private static func makeGlass(size: CGSize, progress: Float) -> SKSpriteNode {
         let sprite = SKSpriteNode(color: .clear, size: size)
         sprite.isHidden = true
         sprite.blendMode = .alpha
         sprite.zPosition = 1
-        let growth = SKUniform(name: "u_progress", float: progress)
-        let shader = SKShader(source: glassShaderSource)
-        shader.uniforms = [growth]
-        sprite.shader = shader
-        return (sprite, growth)
+        sprite.shader = glassShader
+        sprite.setValue(SKAttributeValue(float: progress), forAttribute: "a_progress")
+        return sprite
     }
 
     private static func makeLight(size: CGSize) -> SKSpriteNode {
@@ -262,7 +306,15 @@ final class FractureBlowerCrack {
     }
 
     private static func loadTexture(named name: String, completion: @escaping (SKTexture) -> Void) {
+        if let cached = cachedTexture(named: name) {
+            if Thread.isMainThread { completion(cached) } else { DispatchQueue.main.async { completion(cached) } }
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async {
+            if let cached = cachedTexture(named: name) {
+                DispatchQueue.main.async { completion(cached) }
+                return
+            }
             guard let url = Bundle.main.url(forResource: name, withExtension: nil, subdirectory: "assets"),
                   let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -270,6 +322,7 @@ final class FractureBlowerCrack {
             }
             let texture = SKTexture(cgImage: image)
             texture.filteringMode = .linear
+            store(texture, as: name)
             SKTexture.preload([texture]) {
                 DispatchQueue.main.async {
                     completion(texture)

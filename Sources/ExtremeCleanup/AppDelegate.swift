@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// `--self-check <dir>`: re-capture the screen with the overlay up, write a pixel diff report, quit.
     private let selfCheckDir = AppDelegate.directory(after: "--self-check")
-    /// `--demo-hammer|minigun|void|sweep|belt|cursor <dir>`: scripted run on the main display, with captures and a report.
+    /// `--demo-hammer|minigun|void|sweep|belt|cursor|director <dir>`: scripted run on the main display, with captures and a report.
     private let hammerDemoDir = AppDelegate.directory(after: "--demo-hammer")
     private let minigunDemoDir = AppDelegate.directory(after: "--demo-minigun")
     private let voidDemoDir = AppDelegate.directory(after: "--demo-void")
@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let beltDemoDir = AppDelegate.directory(after: "--demo-belt")
     private let cursorDemoDir = AppDelegate.directory(after: "--demo-cursor")
     private let blowerDemoDir = AppDelegate.directory(after: "--demo-blower")
+    private let directorDemoDir = AppDelegate.directory(after: "--demo-director")
     /// `--demo-launcher <dir>`: drives the launcher through Start, Esc and a second Start; `--demo-recall <dir>`
     /// checks on a later launch that the choices came back.
     private let launcherDemoDir = AppDelegate.directory(after: "--demo-launcher")
@@ -75,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let scripted = [selfCheckDir, hammerDemoDir, minigunDemoDir, voidDemoDir, sweepDemoDir, beltDemoDir,
-                        cursorDemoDir, blowerDemoDir]
+                        cursorDemoDir, blowerDemoDir, directorDemoDir]
         guard scripted.allSatisfy({ $0 == nil }) else {
             Task { await runScripted() }
             return
@@ -118,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await Demo.void(scene: scene, screen: shot.screen, into: dir)
             } else if let dir = blowerDemoDir {
                 await Demo.blower(scene: scene, screen: shot.screen, into: dir)
+            } else if let dir = directorDemoDir {
+                await Demo.director(scene: scene, screen: shot.screen, into: dir)
             }
         }
         NSApp.terminate(nil)
@@ -203,8 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             view.presentScene(scene)
             window.contentView = view
             (view.layer as? CAMetalLayer)?.colorspace = shot.image.colorSpace
-            FractureBlowerCrack.prepare(in: view)
             window.makeKeyAndOrderFront(nil)
+            FractureBlowerCrack.prepare(in: view)
             windows.append(window)
             scenes.append(scene)
         }

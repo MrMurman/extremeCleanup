@@ -6,8 +6,12 @@ import AppKit
 /// video crops. `[x, y]` are fractions of the stage from its top-left corner; `{"icon": name, "dx": …, "dy": …}`
 /// is the middle of a desktop icon's tile, nudged by stage fractions; `{"belt": 2}` and `{"belt": "broom"}` are a pocket
 /// and the broom charm on the toolbelt, so a take can pick a tool or start the sweep with a visible click.
+///
+/// `blow` takes the same path shape as `fire`: the first stop is the nozzle, later stops are where the pointer
+/// is dragged to aim. `gust` takes `direction` (-1 or 1) and `strength` (0...1); `belt` takes `show` (true slides
+/// in, false slides out). A top-level `belt` sets the opening state and `crackDwell` overrides the blower's dwell.
 struct Choreography: Decodable {
-    enum Action: String, Decodable { case move, press, fire, tool, sweep, mark, end }
+    enum Action: String, Decodable { case move, press, fire, blow, tool, gust, belt, sweep, mark, end }
     enum Ease: String, Decodable { case linear, inOut }
 
     enum Target: Decodable {
@@ -34,7 +38,7 @@ struct Choreography: Decodable {
         }
     }
 
-    /// A point on a firing path, and how long the aim rests there: `[x, y, hold]` or `{"icon": …, "hold": …}`.
+    /// A point on a firing or blowing path, and how long the aim rests there: `[x, y, hold]` or `{"icon": …, "hold": …}`.
     struct Stop: Decodable {
         let target: Target
         let hold: Double
@@ -62,15 +66,25 @@ struct Choreography: Decodable {
         let ease: Ease?
         let tool: String?
         let name: String?
+        /// `belt`: true slides the toolbelt in, false slides it out.
+        let show: Bool?
+        /// `gust`: -1 blows left, 1 blows right.
+        let direction: Double?
+        /// `gust`: peak strength, 0...1.
+        let strength: Double?
 
         private enum CodingKeys: String, CodingKey {
-            case at, action = "do", to, path, duration = "for", ease, tool, name
+            case at, action = "do", to, path, duration = "for", ease, tool, name, show, direction, strength
         }
     }
 
     /// Sound effects and music for the take, whatever the launcher last saved.
     let sound: Bool
     let music: Bool
+    /// Whether the toolbelt is in frame when the take opens; a `belt` beat can slide it in later.
+    let belt: Bool?
+    /// Overrides the scene's blower dwell for this take, so the hold fits the voice.
+    let crackDwell: Double?
     /// Where the tool stands when the scene opens.
     let start: Target
     /// Played straight away, before Space: preparation the video doesn't need, such as pre-cracking a spot.
@@ -113,14 +127,18 @@ final class Director {
         case unknownTool(String)
         case noBelt(String)
         case missing(String, in: Choreography.Action)
+        case badValue(String, in: Choreography.Action, String)
+        case badSetting(String, String)
 
         var description: String {
             switch self {
             case let .unknownIcon(name, available):
                 "no desktop icon named \"\(name)\"; on the desktop: \(available.joined(separator: ", "))"
-            case let .unknownTool(name): "unknown tool \"\(name)\"; use hammer or minigun"
+            case let .unknownTool(name): "unknown tool \"\(name)\"; use hammer, minigun or blower"
             case let .noBelt(what): "\(what) is not on the toolbelt here"
             case let .missing(field, action): "a \(action.rawValue) beat needs \"\(field)\""
+            case let .badValue(field, action, reason): "\(field) \(reason) in a \(action.rawValue) beat"
+            case let .badSetting(field, reason): "\(field) \(reason)"
             }
         }
     }
@@ -143,8 +161,13 @@ final class Director {
         self.icons = icons
         self.select = select
         // Every target and tool is checked up front, so a typo fails before the take rather than in the middle of it.
+        if let dwell = choreography.crackDwell, !(dwell > 0) {
+            throw Failure.badSetting("crackDwell", "must be greater than zero")
+        }
         _ = try point(choreography.start)
         for beat in choreography.setup + choreography.beats { try validate(beat) }
+        if let dwell = choreography.crackDwell { scene.crackDwell = dwell }
+        scene.setBeltVisible(choreography.belt ?? true, animated: false)
     }
 
     /// Space: start the take.
@@ -153,20 +176,22 @@ final class Director {
         go = nil
     }
 
-    /// Plays the setup, waits for Space, then plays the take, filming it (macOS 15 and later) next to the choreography
-    /// as `<file>.take-<time>.mov` and logging it to `<file>.log-<time>.json`.
-    func run() async throws -> URL {
+    /// Plays the setup, waits for Space (unless `autoStart`), then plays the take, filming it (macOS 15 and later)
+    /// next to the choreography as `<file>.take-<time>.mov` and logging it to `<file>.log-<time>.json`.
+    func run(autoStart: Bool = false, record: Bool = true) async throws -> URL {
         scene.scriptedPointer = try point(choreography.start)
         try? await Task.sleep(for: .seconds(1))
         _ = try await play(choreography.setup)
-        await withCheckedContinuation { go = $0 }
+        if !autoStart {
+            await withCheckedContinuation { go = $0 }
+        }
         let stamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
             .replacingOccurrences(of: ":", with: "")
         let base = file.deletingPathExtension()
         var video: URL?
         var filmingSince: ContinuousClock.Instant?
         var stopFilming: (() async throws -> Void)?
-        if #available(macOS 15, *) {
+        if record, #available(macOS 15, *) {
             let recorder = TakeRecorder()
             let url = base.appendingPathExtension("take-\(stamp).mov")
             filmingSince = try await recorder.start(screen: screen, stage: stage, to: url)
@@ -216,8 +241,16 @@ final class Director {
             case .fire:
                 let stops = try beat.path!.map { (point: try point($0.target), hold: $0.hold) }
                 running.append(Task { await self.fire(along: stops, over: beat.duration!) })
+            case .blow:
+                let stops = try beat.path!.map { (point: try point($0.target), hold: $0.hold) }
+                running.append(Task { await self.blow(along: stops, over: beat.duration!) })
             case .tool:
                 select(try tool(beat.tool!))
+            case .gust:
+                scene.startGust(direction: CGFloat(beat.direction!), strength: CGFloat(beat.strength!),
+                                seconds: beat.duration ?? 3)
+            case .belt:
+                running.append(Task { await self.slideBelt(beat.show!, over: beat.duration ?? 0.4) })
             case .sweep:
                 scene.sweep()
             case .mark, .end:
@@ -278,6 +311,54 @@ final class Director {
         scene.stopFiring()
     }
 
+    /// Holds the blower with the nozzle at the first stop and aims at the later stops, the way a mouse presses
+    /// once and then drags. The air lands ahead of the nozzle, so the aim points choose the crack.
+    private func blow(along stops: [(point: CGPoint, hold: Double)], over seconds: Double) async {
+        guard let nozzle = stops.first?.point, stops.count > 1 else { return }
+        let aims = stops.dropFirst().map(\.point)
+        let holds = stops.map(\.hold)
+        let travel = max(seconds - holds.reduce(0, +), 0)
+        let legs = zip(aims, aims.dropFirst()).map { hypot($1.x - $0.x, $1.y - $0.y) }
+        let length = max(legs.reduce(0, +), 1)
+        var segments: [(from: CGPoint, to: CGPoint, duration: Double)] = []
+        for (i, aim) in aims.enumerated() {
+            let hold = holds[i + 1] + (i == 0 ? holds[0] : 0)
+            if hold > 0 { segments.append((aim, aim, hold)) }
+            if i < legs.count { segments.append((aim, aims[i + 1], travel * legs[i] / length)) }
+        }
+        let total = segments.map(\.duration).reduce(0, +)
+        scene.scriptedPointer = nozzle
+        scene.startBlowing(at: nozzle)
+        scene.aimBlow(at: aims[0])
+        let clock = ContinuousClock()
+        let origin = clock.now
+        while true {
+            let elapsed = (clock.now - origin).inSeconds
+            var left = elapsed, aim = aims.last!
+            for segment in segments {
+                if left <= segment.duration {
+                    let k = segment.duration > 0 ? CGFloat(left / segment.duration) : 1
+                    aim = segment.from.moved(toward: segment.to, by: k)
+                    break
+                }
+                left -= segment.duration
+            }
+            scene.aimBlow(at: aim)
+            if elapsed >= total { break }
+            try? await Task.sleep(for: tick)
+        }
+        scene.stopBlowing()
+    }
+
+    private func slideBelt(_ visible: Bool, over seconds: Double) async {
+        scene.setBeltVisible(visible, animated: seconds > 0, duration: seconds)
+        if seconds > 0 {
+            try? await Task.sleep(for: .seconds(seconds))
+            // Settle the final state: the action's last frame may still be one frame away.
+            scene.setBeltVisible(visible, animated: false)
+        }
+    }
+
     private func validate(_ beat: Choreography.Beat) throws {
         switch beat.action {
         case .move:
@@ -289,6 +370,30 @@ final class Director {
             guard let path = beat.path, !path.isEmpty else { throw Failure.missing("path", in: .fire) }
             guard beat.duration != nil else { throw Failure.missing("for", in: .fire) }
             _ = try path.map { try point($0.target) }
+        case .blow:
+            guard let path = beat.path, !path.isEmpty else { throw Failure.missing("path", in: .blow) }
+            guard path.count >= 2 else { throw Failure.badValue("path", in: .blow, "needs a nozzle and an aim") }
+            guard let duration = beat.duration, duration > 0 else {
+                throw Failure.badValue("for", in: .blow, "must be greater than zero")
+            }
+            _ = try path.map { try point($0.target) }
+        case .gust:
+            guard let direction = beat.direction else { throw Failure.missing("direction", in: .gust) }
+            guard direction == -1 || direction == 1 else {
+                throw Failure.badValue("direction", in: .gust, "must be -1 or 1")
+            }
+            guard let strength = beat.strength else { throw Failure.missing("strength", in: .gust) }
+            guard strength > 0, strength <= 1 else {
+                throw Failure.badValue("strength", in: .gust, "must be greater than 0 and at most 1")
+            }
+            if let duration = beat.duration, !(duration > 0) {
+                throw Failure.badValue("for", in: .gust, "must be greater than zero")
+            }
+        case .belt:
+            guard beat.show != nil else { throw Failure.missing("show", in: .belt) }
+            if let duration = beat.duration, !(duration > 0) {
+                throw Failure.badValue("for", in: .belt, "must be greater than zero")
+            }
         case .tool:
             guard let name = beat.tool else { throw Failure.missing("tool", in: .tool) }
             _ = try tool(name)
@@ -301,6 +406,7 @@ final class Director {
         switch name.lowercased() {
         case "hammer": .hammer
         case "minigun": .minigun
+        case "blower", "leaf blower", "leafblower": .leafBlower
         default: throw Failure.unknownTool(name)
         }
     }

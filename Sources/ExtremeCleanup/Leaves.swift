@@ -140,6 +140,7 @@ final class Leaves {
     }
 
     var isOn: Bool { running }
+    var isGusting: Bool { gustLength > 0 }
 
     /// Called as each gust begins, with its length (s), peak strength (0...1) and direction (±1).
     var onGust: ((_ seconds: CGFloat, _ strength: CGFloat, _ direction: CGFloat) -> Void)?
@@ -148,6 +149,16 @@ final class Leaves {
         guard !running else { return }
         running = true
         canopy.show()
+    }
+
+    /// Starts a gust now, for a directed take, instead of waiting for the random schedule.
+    func startGust(seconds: CGFloat, strength: CGFloat, direction: CGFloat) {
+        guard running else { return }
+        gustDir = direction < 0 ? -1 : 1
+        gustLength = max(0.1, seconds)
+        gustPeak = min(1, max(0, strength))
+        gustTime = 0
+        onGust?(gustLength, gustPeak, gustDir)
     }
 
     func stop() {

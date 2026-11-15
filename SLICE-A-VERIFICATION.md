@@ -1,12 +1,12 @@
 ---
 status: draft
-date: 2026-11-09
+date: 2026-11-13
 genre: verification
 scope: task
-feature: Extreme Cleanup — blower crack (Slices A and A2)
+feature: Extreme Cleanup — blower crack and director beats (Slices A, A2 and B)
 ---
 
-# Slice A — Blower Crack Verification
+# Slices A, A2 and B — Extreme Cleanup verification
 
 ## Manual Test Checklist
 
@@ -154,7 +154,8 @@ growth windows and the existing crack timing.
 no crack before 3 s, crack after 3 s, big crack after 6 s, exactly one site, no hole, and a worst
 frame of 14.6 ms against the 25 ms budget. The final captures are
 `.build/final-fracture-demo/5-final-scene.png` and `6-crack-stage-scene.png`. No archived impact or
-ember assets are present in the app bundle.
+ember assets are present in the app bundle. **2026-11-13:** after the shared-shader prewarm described under
+Slice B, the same demo reports 9.3 ms.
 
 ### Manual checklist (owner)
 
@@ -171,3 +172,55 @@ Confirmed by the owner on 2026-11-13.
 - The blower can still open a hole when its hit **merges two already-damaged sites** whose combined
   damage is ≥ 3. That is the planned later "blower breaks glass" feature, not A2; the demo holds on a
   clean spot, so it does not exercise it.
+
+## Slice B — Director beats (2026-11-13)
+
+Complete based on scripted verification. On 2026-11-15 the owner confirmed that Director mode is operated by agents for filming, removed the owner live-check gate, and requested the Slice B commit. Recording is the next focus.
+
+### Choreography additions
+- `tool`: `"blower"` (also `"leaf blower"` / `"leafblower"`) selects the leaf blower.
+- `blow`: a `path` of `[x, y, hold]` / `{"icon": …, "hold": …}` stops and `for` seconds. The first stop is the
+  nozzle (press), later stops are the drag/aim path; the air lands ahead of the nozzle as it does for a mouse.
+  At least two stops are required.
+- `gust`: `direction` -1/1, `strength` 0…1, optional `for` (default 3 s). Starts a gust immediately; leaves
+  must already be on (the blower tool starts autumn).
+- `belt`: `show` true/false and optional `for` (default 0.4 s). A top-level `belt` sets the opening state, so a
+  take can start with the belt hidden.
+- A top-level `crackDwell` overrides the blower's dwell for the take.
+- Validation rejects a missing or out-of-range field before the take.
+
+### Scripted results
+
+`scripts/bundle.sh` passed. The new `--demo-director` plays a 4.6 s choreography (belt in, blower, gust, blow
+with a 1.0 s dwell, belt out) and checks the scene and log:
+
+- 13/13 PASS: belt starts hidden, dwell overridden, belt slides in, blower selected, autumn running, gust active,
+  crack after the hold, belt slid out, frame under 25 ms, blow/gust/belt logged, validation rejects a gust
+  without direction.
+- Log: actions `belt, tool, gust, blow, belt, mark`; max drift 1.1 ms; worst frame 13.9 ms (budget 25 ms).
+
+Regression runs after the change:
+- `--demo-blower`: every check PASS; worst frame 9.3 ms. The shared-shader prewarm removed the 350–450 ms
+  first-crack compile; the earlier cold run failed the 25 ms budget.
+- `--demo-belt`: every check PASS; the empty-pocket range was corrected from pockets 2–7 to 3–7 (pocket 3 is
+  the blower).
+- `--demo-sweep`: clean in 2.62 s, Finder icons unchanged.
+- `--demo-launcher`: 30/30 PASS, including the belt on the controls display.
+- `--demo-hammer` / `--demo-minigun`: 97.2 / 97.0 fps during their 15 s / 30 s runs.
+- `--demo-void`: holes, seam and creatures unchanged; 98.2 fps with seven holes open.
+
+Captures and reports: `.build/slice-b-demo4/report.txt`,
+`.build/slice-b-demo4/director-beats.log-*.json`, `.build/regress-blower10/report.txt`,
+`.build/regress-belt2/report.txt`, `.build/regress-sweep/report.txt`,
+`.build/regress-launcher/report.txt`.
+
+### Shader prewarm (A2 follow-up)
+
+`FractureBlowerCrack` now shares one `SKShader` and passes growth through a per-sprite `a_progress` attribute
+instead of creating a shader object per layer. `prepare(in:)` caches the eight fracture/glow textures and renders
+a real 460 pt fracture once at launch. This is what brings the scripted frame budget back under 25 ms.
+
+### Out of scope
+
+- The actual reel take, the Slice 0 recording account, music (D), typing/keyboard (C) and the cut (E).
+- Blower holes from merged damage sites remain the planned later feature, not Slice B.

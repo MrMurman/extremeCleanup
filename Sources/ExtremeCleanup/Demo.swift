@@ -144,6 +144,79 @@ enum Demo {
         try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
     }
 
+    /// Plays a short choreography through the new director beats and checks what they did.
+    static func director(scene: DeskScene, screen: NSScreen, into dir: URL) async {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var report = ""
+        func check(_ name: String, _ ok: Bool) { report += (ok ? "PASS " : "FAIL ") + name + "\n" }
+
+        let file = dir.appendingPathComponent("director-beats.json")
+        let json = """
+        {
+          "sound": false,
+          "music": false,
+          "belt": false,
+          "crackDwell": 1.0,
+          "start": [0.5, 0.5],
+          "setup": [],
+          "beats": [
+            {"at": 0.0, "do": "belt", "show": true},
+            {"at": 0.6, "do": "tool", "tool": "blower"},
+            {"at": 1.0, "do": "gust", "direction": 1, "strength": 0.8, "for": 10, "name": "gust"},
+            {"at": 2.0, "do": "blow", "path": [[0.3, 0.6, 0], [0.45, 0.6, 1.5]], "for": 1.6, "name": "crack"},
+            {"at": 4.2, "do": "belt", "show": false},
+            {"at": 4.6, "do": "mark"}
+          ]
+        }
+        """
+        try? json.write(to: file, atomically: true, encoding: .utf8)
+        do {
+            let choreography = try Choreography.load(file)
+            let director = try Director(choreography, from: file, scene: scene, screen: screen,
+                                        icons: DesktopIcons.read(), select: { scene.tool = $0 })
+            check("belt starts hidden", !scene.beltVisible)
+            check("crackDwell overridden", abs(scene.crackDwell - 1.0) < 0.001)
+            let beltShown = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                return scene.beltVisible
+            }
+            let logURL = try await director.run(autoStart: true, record: false)
+            check("belt slid in during the take", await beltShown.value)
+            check("blower selected", scene.tool == .leafBlower)
+            check("autumn running", scene.isAutumnOn)
+            check("gust active", scene.isGusting)
+            check("crack after the hold", scene.siteStages.contains(.crack))
+            check("belt slid out", !scene.beltVisible)
+            check("frame under 25 ms", scene.worstFrame * 1000 < 25)
+            let log = try JSONSerialization.jsonObject(with: Data(contentsOf: logURL)) as? [String: Any]
+            let actions = (log?["beats"] as? [[String: Any]])?.compactMap { $0["action"] as? String } ?? []
+            check("blow beat logged", actions.contains("blow"))
+            check("gust beat logged", actions.contains("gust"))
+            check("belt beats logged", actions.filter { $0 == "belt" }.count == 2)
+            report += "actions: \(actions.joined(separator: ", "))\n"
+            report += String(format: "worst frame: %.1f ms\n", scene.worstFrame * 1000)
+
+            let badFile = dir.appendingPathComponent("bad-choreography.json")
+            let badJSON = """
+            {
+              "sound": false, "music": false, "start": [0.5, 0.5], "setup": [],
+              "beats": [{"at": 0, "do": "gust", "strength": 0.5}]
+            }
+            """
+            try? badJSON.write(to: badFile, atomically: true, encoding: .utf8)
+            if let bad = try? Choreography.load(badFile) {
+                let rejected = (try? Director(bad, from: badFile, scene: scene, screen: screen,
+                                              icons: DesktopIcons.read(), select: { scene.tool = $0 })) == nil
+                check("validation rejects a gust without direction", rejected)
+            } else {
+                check("validation fixture decodes", false)
+            }
+        } catch {
+            check("choreography runs: \(error)", false)
+        }
+        try? report.write(to: dir.appendingPathComponent("report.txt"), atomically: true, encoding: .utf8)
+    }
+
     static func void(scene: DeskScene, screen: NSScreen, into dir: URL) async {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let w = scene.size.width, h = scene.size.height
@@ -260,7 +333,7 @@ enum Demo {
         for i in 0..<8 { scene.press(at: pockets[i]) }
         check("clicks on the belt never damage the glass", scene.damagedSites == sites && scene.roundsFired == rounds)
         scene.press(at: pockets[0])
-        for i in 2..<8 { scene.press(at: pockets[i]) }
+        for i in 3..<8 { scene.press(at: pockets[i]) }
         check("empty pockets keep the current tool", scene.tool == .hammer)
 
         // Load the screen with damage, then measure the frame rate with the belt up.

@@ -204,6 +204,12 @@ final class DeskScene: SKScene {
     func startAutumn() { leaves?.start() }
     func stopAutumn() { leaves?.stop() }
     var isAutumnOn: Bool { leaves?.isOn ?? false }
+    var isGusting: Bool { leaves?.isGusting ?? false }
+
+    /// Starts a gust now, for a directed take; leaves must already be on.
+    func startGust(direction: CGFloat, strength: CGFloat, seconds: TimeInterval) {
+        leaves?.startGust(seconds: CGFloat(seconds), strength: strength, direction: direction)
+    }
 
     // MARK: - Input
 
@@ -218,6 +224,10 @@ final class DeskScene: SKScene {
     var beltPockets: [CGPoint] { toolbelt?.pocketCentres ?? [] }
     var beltCharm: CGPoint? { toolbelt?.charmCentre }
     var beltVisible: Bool { toolbelt.map { !$0.isHidden } ?? false }
+    /// Slides the belt in or out for a directed take.
+    func setBeltVisible(_ visible: Bool, animated: Bool = true, duration: TimeInterval = 0.4) {
+        toolbelt?.setVisible(visible, animated: animated, duration: duration)
+    }
     var pointerVisible: Bool { !pointer.isHidden }
     var pointerPosition: CGPoint { pointer.position }
     var pointerSwinging: Bool { pointer.isSwinging }
@@ -290,8 +300,10 @@ final class DeskScene: SKScene {
     func startBlowing(at point: CGPoint) {
         guard broom == nil, !isClean, tool == .leafBlower else { return }
         blowOrigin = point
+        blowAngle = 0
         heldAim = nil
         airStream.position = point
+        airStream.emissionAngle = 0
         airStream.particleBirthRate = 240
         nextBlowSound = 0
         pointer.blow(true)

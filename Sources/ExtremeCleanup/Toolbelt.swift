@@ -13,6 +13,8 @@ final class Toolbelt: SKNode {
 
     private var items: [DeskScene.Tool: (sprite: SKSpriteNode, frames: [SKTexture])] = [:]
     private var marks: [Int: SKLabelNode] = [:]
+    /// Where the belt rests when it is in frame; slides move between this and the right edge.
+    private var home = CGPoint.zero
     private let highlight: SKShapeNode
     private let charm = SKNode()
     private let broom: SKSpriteNode
@@ -93,6 +95,7 @@ final class Toolbelt: SKNode {
         let overhang = (Toolbelt.cordLength + broomSize.height * Toolbelt.charmScale) * xScale
         position = CGPoint(x: screenSize.width - (Toolbelt.width / 2 + 14) * xScale,
                            y: screenSize.height / 2 + overhang / 2)
+        home = position
         zPosition = 40
     }
 
@@ -150,9 +153,27 @@ final class Toolbelt: SKNode {
         return scene.convert(CGPoint(x: frame.midX, y: frame.midY), from: self)
     }
 
+    /// Slides the belt in from the right edge, or out to it.
+    func setVisible(_ visible: Bool, animated: Bool = true, duration: TimeInterval = 0.4) {
+        let offscreen = CGPoint(x: home.x + (Toolbelt.width + 40) * xScale, y: home.y)
+        removeAction(forKey: "belt-slide")
+        let seconds = max(0, duration)
+        if visible {
+            guard isHidden || position != home else { return }
+            position = offscreen
+            isHidden = false
+            guard animated, seconds > 0 else { position = home; return }
+            run(.move(to: home, duration: seconds), withKey: "belt-slide")
+        } else {
+            guard !isHidden || position != offscreen else { return }
+            guard animated, seconds > 0 else { position = offscreen; isHidden = true; return }
+            run(.sequence([.move(to: offscreen, duration: seconds), .hide()]), withKey: "belt-slide")
+        }
+    }
+
     /// Slides the belt off the right edge of the screen.
     func leave() {
-        run(.sequence([.moveBy(x: (Toolbelt.width + 40) * xScale, y: 0, duration: 0.4), .hide()]))
+        setVisible(false)
     }
 
     private static func centre(of index: Int) -> CGPoint {
